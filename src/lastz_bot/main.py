@@ -1,23 +1,8 @@
-import os
-
 import discord
 from discord import app_commands
-from dotenv import load_dotenv
 
 from lastz_bot.commands.general import setup_general_commands
-
-
-def get_discord_token() -> str:
-    load_dotenv()
-
-    token = os.getenv("DISCORD_TOKEN")
-
-    if not token:
-        raise RuntimeError(
-            "DISCORD_TOKEN is missing. Add it to the .env file."
-        )
-
-    return token
+from lastz_bot.config import load_settings
 
 
 class LastZBot(discord.Client):
@@ -44,8 +29,8 @@ client = LastZBot()
 
 
 def main() -> None:
-    token = get_discord_token()
-    client.run(token)
+    settings = load_settings()
+    client.run(settings.discord_token)
 
 
 if __name__ == "__main__":
