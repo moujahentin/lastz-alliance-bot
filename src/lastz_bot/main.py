@@ -1,6 +1,7 @@
 import os
 
 import discord
+from discord import app_commands
 from dotenv import load_dotenv
 
 
@@ -18,6 +19,16 @@ def get_discord_token() -> str:
 
 
 class LastZBot(discord.Client):
+    def __init__(self) -> None:
+        intents = discord.Intents.default()
+        super().__init__(intents=intents)
+
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self) -> None:
+        await self.tree.sync()
+        print("Slash commands synchronized.")
+
     async def on_ready(self) -> None:
         if self.user is None:
             return
@@ -26,12 +37,23 @@ class LastZBot(discord.Client):
         print(f"Connected to {len(self.guilds)} Discord server(s).")
 
 
+client = LastZBot()
+
+
+@client.tree.command(
+    name="ping",
+    description="Check whether the Last Z Alliance Assistant is online.",
+)
+async def ping(interaction: discord.Interaction) -> None:
+    latency_ms = round(client.latency * 1000)
+
+    await interaction.response.send_message(
+        f"🏓 Pong! `{latency_ms} ms`"
+    )
+
+
 def main() -> None:
     token = get_discord_token()
-
-    intents = discord.Intents.default()
-    client = LastZBot(intents=intents)
-
     client.run(token)
 
 
