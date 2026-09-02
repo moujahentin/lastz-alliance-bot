@@ -1,5 +1,6 @@
 import os
 
+import discord
 from dotenv import load_dotenv
 
 
@@ -16,10 +17,22 @@ def get_discord_token() -> str:
     return token
 
 
+class LastZBot(discord.Client):
+    async def on_ready(self) -> None:
+        if self.user is None:
+            return
+
+        print(f"Logged in as {self.user} (ID: {self.user.id})")
+        print(f"Connected to {len(self.guilds)} Discord server(s).")
+
+
 def main() -> None:
     token = get_discord_token()
-    print("Discord token loaded successfully.")
-    print(f"Token length: {len(token)} characters")
+
+    intents = discord.Intents.default()
+    client = LastZBot(intents=intents)
+
+    client.run(token)
 
 
 if __name__ == "__main__":
