@@ -106,4 +106,83 @@ def setup_member_commands(
             ephemeral=True,
         )
 
+    @member_group.command(
+        name="list",
+        description="List the members of an alliance.",
+    )
+    async def list_members(
+        interaction: discord.Interaction,
+        alliance: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+
+        alliance_name = alliance.strip()
+
+        if not alliance_name:
+            await interaction.response.send_message(
+                "❌ Alliance name cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        with SessionLocal() as session:
+            guild = session.get(Guild, interaction.guild.id)
+
+            if guild is None:
+                await interaction.response.send_message(
+                    "❌ This Discord server has not been initialized yet. Run `/setup` first.",
+                    ephemeral=True,
+                )
+                return
+
+            alliance_record = session.scalar(
+                select(Alliance).where(
+                    Alliance.guild_id == interaction.guild.id,
+                    Alliance.name == alliance_name,
+                )
+            )
+
+            if alliance_record is None:
+                await interaction.response.send_message(
+                    f"❌ Alliance `{alliance_name}` does not exist.",
+                    ephemeral=True,
+                )
+                return
+
+            members = session.scalars(
+                select(Member)
+                .where(Member.alliance_id == alliance_record.id)
+                .order_by(Member.game_name)
+            ).all()
+
+        if not members:
+            await interaction.response.send_message(
+                f"ℹ️ Alliance `{alliance_name}` has no members yet.",
+                ephemeral=True,
+            )
+            return
+
+        member_lines = []
+
+        for member in members:
+            if member.discord_user_id is not None:
+                member_lines.append(
+                    f"• `{member.game_name}` — <@{member.discord_user_id}>"
+                )
+            else:
+                member_lines.append(
+                    f"• `{member.game_name}`"
+                )
+
+        await interaction.response.send_message(
+            f"**Members of `{alliance_name}`:**\n"
+            + "\n".join(member_lines),
+            ephemeral=True,
+        )
+
     tree.add_command(member_group)
