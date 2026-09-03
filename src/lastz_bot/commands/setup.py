@@ -20,6 +20,13 @@ def setup_setup_commands(
             )
             return
 
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need the Administrator permission to use this command.",
+                ephemeral=True,
+            )
+            return
+
         with SessionLocal() as session:
             guild = session.get(Guild, interaction.guild.id)
 
