@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lastz_bot.database.base import Base
@@ -33,6 +33,13 @@ class Guild(Base):
 
 class Alliance(Base):
     __tablename__ = "alliances"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id",
+            "name",
+            name="uq_alliances_guild_id_name",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True,
