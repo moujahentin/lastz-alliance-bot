@@ -76,6 +76,13 @@ class Alliance(Base):
 
 class Member(Base):
     __tablename__ = "members"
+    __table_args__ = (
+        UniqueConstraint(
+            "alliance_id",
+            "game_name",
+            name="uq_members_alliance_id_game_name",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True,
