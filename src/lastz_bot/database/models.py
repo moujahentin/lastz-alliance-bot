@@ -60,3 +60,44 @@ class Alliance(Base):
     guild: Mapped["Guild"] = relationship(
         back_populates="alliances",
     )
+
+    members: Mapped[list["Member"]] = relationship(
+        back_populates="alliance",
+        cascade="all, delete-orphan",
+    )
+
+
+class Member(Base):
+    __tablename__ = "members"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    alliance_id: Mapped[int] = mapped_column(
+        ForeignKey("alliances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    game_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    discord_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    alliance: Mapped["Alliance"] = relationship(
+        back_populates="members",
+    )
