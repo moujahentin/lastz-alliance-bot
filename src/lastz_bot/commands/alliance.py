@@ -82,4 +82,51 @@ def setup_alliance_commands(
             ephemeral=True,
         )
 
+    @alliance_group.command(
+        name="list",
+        description="List the alliances registered for this Discord server.",
+    )
+    async def list_alliances(
+        interaction: discord.Interaction,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+
+        with SessionLocal() as session:
+            guild = session.get(Guild, interaction.guild.id)
+
+            if guild is None:
+                await interaction.response.send_message(
+                    "❌ This Discord server has not been initialized yet. Run `/setup` first.",
+                    ephemeral=True,
+                )
+                return
+
+            alliances = session.scalars(
+                select(Alliance)
+                .where(Alliance.guild_id == interaction.guild.id)
+                .order_by(Alliance.name)
+            ).all()
+
+        if not alliances:
+            await interaction.response.send_message(
+                "ℹ️ No alliances have been created for this Discord server yet.",
+                ephemeral=True,
+            )
+            return
+
+        alliance_lines = [
+            f"• `{alliance.name}`"
+            for alliance in alliances
+        ]
+
+        await interaction.response.send_message(
+            "**Alliances:**\n" + "\n".join(alliance_lines),
+            ephemeral=True,
+        )
+
     tree.add_command(alliance_group)
