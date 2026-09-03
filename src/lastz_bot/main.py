@@ -3,6 +3,7 @@ from discord import app_commands
 
 from lastz_bot.commands.alliance import setup_alliance_commands
 from lastz_bot.commands.general import setup_general_commands
+from lastz_bot.commands.member import setup_member_commands
 from lastz_bot.commands.setup import setup_setup_commands
 from lastz_bot.config import load_settings
 
@@ -15,6 +16,7 @@ class LastZBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         setup_alliance_commands(self.tree)
         setup_general_commands(self.tree, self)
+        setup_member_commands(self.tree)
         setup_setup_commands(self.tree)
 
     async def setup_hook(self) -> None:
