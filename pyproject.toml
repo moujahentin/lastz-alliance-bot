@@ -12,6 +12,8 @@ requires-python = ">=3.13"
 dependencies = [
     "discord.py==2.7.1",
     "python-dotenv==1.2.3",
+    "SQLAlchemy==2.0.52",
+    "alembic==1.19.1",
 ]
 
 [tool.setuptools]
