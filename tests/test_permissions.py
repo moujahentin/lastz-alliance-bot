@@ -151,6 +151,29 @@ class GetMemberRankIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(linked_member)
         self.assertEqual(linked_member.game_name, "Leader")
 
+    def test_existing_discord_link_excludes_current_member(self) -> None:
+        from lastz_bot.database.models import Member
+
+        with self.TestSessionLocal() as session:
+            alliance = session.scalar(
+                select(Alliance).where(Alliance.name == "Alpha")
+            )
+            member = session.scalar(
+                select(Member).where(
+                    Member.alliance_id == alliance.id,
+                    Member.game_name == "Leader",
+                )
+            )
+
+        linked_member = get_existing_discord_link(
+            alliance_id=alliance.id,
+            discord_user_id=555,
+            exclude_member_id=member.id,
+        )
+
+        self.assertIsNone(linked_member)
+
+
     def test_existing_discord_link_does_not_leak_between_alliances(self) -> None:
         with self.TestSessionLocal() as session:
             alliance = session.scalar(
