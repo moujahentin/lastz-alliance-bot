@@ -73,6 +73,11 @@ class Alliance(Base):
         cascade="all, delete-orphan",
     )
 
+    events: Mapped[list["Event"]] = relationship(
+        back_populates="alliance",
+        cascade="all, delete-orphan",
+    )
+
 
 class Member(Base):
     __tablename__ = "members"
@@ -130,4 +135,50 @@ class Member(Base):
 
     alliance: Mapped["Alliance"] = relationship(
         back_populates="members",
+    )
+
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    alliance_id: Mapped[int] = mapped_column(
+        ForeignKey("alliances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+
+    created_by_discord_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    alliance: Mapped["Alliance"] = relationship(
+        back_populates="events",
     )
