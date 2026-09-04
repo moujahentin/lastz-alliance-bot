@@ -367,4 +367,91 @@ def setup_member_commands(
             ephemeral=True,
         )
 
+    @member_group.command(
+        name="rank",
+        description="Change the rank of an existing alliance member.",
+    )
+    async def rank(
+        interaction: discord.Interaction,
+        alliance: str,
+        game_name: str,
+        rank: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need the Administrator permission to change a member rank.",
+                ephemeral=True,
+            )
+            return
+
+        alliance_name = alliance.strip()
+        player_name = game_name.strip()
+        member_rank = rank.strip().upper()
+
+        if not alliance_name:
+            await interaction.response.send_message(
+                "❌ Alliance name cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        if not player_name:
+            await interaction.response.send_message(
+                "❌ Game name cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        if member_rank not in {"MEMBER", "R4", "R5"}:
+            await interaction.response.send_message(
+                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
+                ephemeral=True,
+            )
+            return
+
+        with SessionLocal() as session:
+            alliance_record = session.scalar(
+                select(Alliance).where(
+                    Alliance.guild_id == interaction.guild.id,
+                    Alliance.name == alliance_name,
+                )
+            )
+
+            if alliance_record is None:
+                await interaction.response.send_message(
+                    f"❌ Alliance `{alliance_name}` does not exist.",
+                    ephemeral=True,
+                )
+                return
+
+            member = session.scalar(
+                select(Member).where(
+                    Member.alliance_id == alliance_record.id,
+                    Member.game_name == player_name,
+                )
+            )
+
+            if member is None:
+                await interaction.response.send_message(
+                    f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
+                    ephemeral=True,
+                )
+                return
+
+            member.rank = member_rank
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Member `{player_name}` in alliance `{alliance_name}` "
+            f"now has rank `{member_rank}`.",
+            ephemeral=True,
+        )
+
     tree.add_command(member_group)
