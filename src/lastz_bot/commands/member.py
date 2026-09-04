@@ -123,6 +123,20 @@ def setup_member_commands(
                 )
                 return
 
+            if discord_user is not None:
+                existing_link = get_existing_discord_link(
+                    alliance_id=alliance_record.id,
+                    discord_user_id=discord_user.id,
+                )
+
+                if existing_link is not None:
+                    await interaction.response.send_message(
+                        f"❌ {discord_user.mention} is already linked to "
+                        f"`{existing_link.game_name}` in alliance `{alliance_name}`.",
+                        ephemeral=True,
+                    )
+                    return
+
             member = Member(
                 alliance_id=alliance_record.id,
                 game_name=player_name,
@@ -131,7 +145,17 @@ def setup_member_commands(
             )
 
             session.add(member)
-            session.commit()
+
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                await interaction.response.send_message(
+                    "❌ The member could not be added because the game name "
+                    "or Discord account already exists in this alliance.",
+                    ephemeral=True,
+                )
+                return
 
         discord_text = (
             f" and linked to {discord_user.mention}"
