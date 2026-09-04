@@ -6,6 +6,7 @@ from lastz_bot.database.models import Alliance, Guild, Member
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.permissions import (
     can_manage_target,
+    get_existing_discord_link,
     get_management_rank,
 )
 
@@ -415,6 +416,20 @@ def setup_member_commands(
             ):
                 await interaction.response.send_message(
                     f"❌ Your rank `{actor_rank}` cannot link a `{member.rank}` member.",
+                    ephemeral=True,
+                )
+                return
+
+            existing_link = get_existing_discord_link(
+                alliance_id=alliance_record.id,
+                discord_user_id=discord_user.id,
+                exclude_member_id=member.id,
+            )
+
+            if existing_link is not None:
+                await interaction.response.send_message(
+                    f"❌ {discord_user.mention} is already linked to "
+                    f"`{existing_link.game_name}` in alliance `{alliance_name}`.",
                     ephemeral=True,
                 )
                 return

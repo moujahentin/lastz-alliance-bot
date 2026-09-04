@@ -1,6 +1,10 @@
 import unittest
 
-from lastz_bot.permissions import can_manage_target, get_management_rank, has_minimum_rank
+from sqlalchemy import select
+
+from lastz_bot.database.models import Alliance
+
+from lastz_bot.permissions import can_manage_target, get_existing_discord_link, get_management_rank, has_minimum_rank
 
 
 class PermissionMatrixTests(unittest.TestCase):
@@ -132,6 +136,33 @@ class GetMemberRankIntegrationTests(unittest.TestCase):
             discord_user_id=555,
         )
         self.assertIsNone(rank)
+
+    def test_existing_discord_link_is_found_in_same_alliance(self) -> None:
+        with self.TestSessionLocal() as session:
+            alliance = session.scalar(
+                select(Alliance).where(Alliance.name == "Alpha")
+            )
+
+        linked_member = get_existing_discord_link(
+            alliance_id=alliance.id,
+            discord_user_id=555,
+        )
+
+        self.assertIsNotNone(linked_member)
+        self.assertEqual(linked_member.game_name, "Leader")
+
+    def test_existing_discord_link_does_not_leak_between_alliances(self) -> None:
+        with self.TestSessionLocal() as session:
+            alliance = session.scalar(
+                select(Alliance).where(Alliance.name == "Bravo")
+            )
+
+        linked_member = get_existing_discord_link(
+            alliance_id=alliance.id,
+            discord_user_id=555,
+        )
+
+        self.assertIsNone(linked_member)
 
 
 if __name__ == "__main__":

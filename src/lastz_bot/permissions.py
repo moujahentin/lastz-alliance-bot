@@ -80,3 +80,20 @@ def get_management_rank(
         return None
 
     return member_rank
+
+
+def get_existing_discord_link(
+    alliance_id: int,
+    discord_user_id: int,
+    exclude_member_id: int | None = None,
+) -> Member | None:
+    with SessionLocal() as session:
+        query = select(Member).where(
+            Member.alliance_id == alliance_id,
+            Member.discord_user_id == discord_user_id,
+        )
+
+        if exclude_member_id is not None:
+            query = query.where(Member.id != exclude_member_id)
+
+        return session.scalar(query)
