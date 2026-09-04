@@ -4,7 +4,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 
-DATABASE_PATH = Path("data/lastz_bot.db")
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DATABASE_PATH = PROJECT_ROOT / "data" / "lastz_bot.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
