@@ -31,6 +31,13 @@ def setup_member_commands(
             )
             return
 
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need the Administrator permission to add a member.",
+                ephemeral=True,
+            )
+            return
+
         alliance_name = alliance.strip()
         player_name = game_name.strip()
 
