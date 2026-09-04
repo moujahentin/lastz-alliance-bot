@@ -22,6 +22,7 @@ def setup_member_commands(
         interaction: discord.Interaction,
         alliance: str,
         game_name: str,
+        rank: str = "MEMBER",
         discord_user: discord.User | None = None,
     ) -> None:
         if interaction.guild is None:
@@ -40,6 +41,14 @@ def setup_member_commands(
 
         alliance_name = alliance.strip()
         player_name = game_name.strip()
+        member_rank = rank.strip().upper()
+
+        if member_rank not in {"MEMBER", "R4", "R5"}:
+            await interaction.response.send_message(
+                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
+                ephemeral=True,
+            )
+            return
 
         if not alliance_name:
             await interaction.response.send_message(
@@ -96,6 +105,7 @@ def setup_member_commands(
             member = Member(
                 alliance_id=alliance_record.id,
                 game_name=player_name,
+                rank=member_rank,
                 discord_user_id=discord_user.id if discord_user else None,
             )
 
