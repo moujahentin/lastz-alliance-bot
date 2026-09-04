@@ -82,6 +82,11 @@ class Member(Base):
             "game_name",
             name="uq_members_alliance_id_game_name",
         ),
+        UniqueConstraint(
+            "alliance_id",
+            "discord_user_id",
+            name="uq_members_alliance_id_discord_user_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
