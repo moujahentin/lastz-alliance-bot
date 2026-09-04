@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from lastz_bot.database.models import Alliance, Guild, Member
 from lastz_bot.database.session import SessionLocal
@@ -435,7 +436,17 @@ def setup_member_commands(
                 return
 
             member.discord_user_id = discord_user.id
-            session.commit()
+
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                await interaction.response.send_message(
+                    f"❌ {discord_user.mention} could not be linked because "
+                    "that Discord account is already linked in this alliance.",
+                    ephemeral=True,
+                )
+                return
 
         await interaction.response.send_message(
             f"✅ Member `{player_name}` in alliance `{alliance_name}` "
