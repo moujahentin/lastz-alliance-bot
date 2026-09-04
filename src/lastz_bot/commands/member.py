@@ -288,4 +288,83 @@ def setup_member_commands(
             ephemeral=True,
         )
 
+    @member_group.command(
+        name="link",
+        description="Link an existing alliance member to a Discord user.",
+    )
+    async def link(
+        interaction: discord.Interaction,
+        alliance: str,
+        game_name: str,
+        discord_user: discord.User,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need the Administrator permission to link a member.",
+                ephemeral=True,
+            )
+            return
+
+        alliance_name = alliance.strip()
+        player_name = game_name.strip()
+
+        if not alliance_name:
+            await interaction.response.send_message(
+                "❌ Alliance name cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        if not player_name:
+            await interaction.response.send_message(
+                "❌ Game name cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        with SessionLocal() as session:
+            alliance_record = session.scalar(
+                select(Alliance).where(
+                    Alliance.guild_id == interaction.guild.id,
+                    Alliance.name == alliance_name,
+                )
+            )
+
+            if alliance_record is None:
+                await interaction.response.send_message(
+                    f"❌ Alliance `{alliance_name}` does not exist.",
+                    ephemeral=True,
+                )
+                return
+
+            member = session.scalar(
+                select(Member).where(
+                    Member.alliance_id == alliance_record.id,
+                    Member.game_name == player_name,
+                )
+            )
+
+            if member is None:
+                await interaction.response.send_message(
+                    f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
+                    ephemeral=True,
+                )
+                return
+
+            member.discord_user_id = discord_user.id
+            session.commit()
+
+        await interaction.response.send_message(
+            f"✅ Member `{player_name}` in alliance `{alliance_name}` "
+            f"has been linked to {discord_user.mention}.",
+            ephemeral=True,
+        )
+
     tree.add_command(member_group)
