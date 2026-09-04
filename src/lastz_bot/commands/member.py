@@ -210,11 +210,11 @@ def setup_member_commands(
         for member in members:
             if member.discord_user_id is not None:
                 member_lines.append(
-                    f"• `{member.game_name}` — <@{member.discord_user_id}>"
+                    f"• `{member.game_name}` — `{member.rank}` — <@{member.discord_user_id}>"
                 )
             else:
                 member_lines.append(
-                    f"• `{member.game_name}`"
+                    f"• `{member.game_name}` — `{member.rank}`"
                 )
 
         await interaction.response.send_message(
