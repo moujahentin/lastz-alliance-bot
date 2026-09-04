@@ -1,6 +1,6 @@
 import unittest
 
-from lastz_bot.permissions import can_manage_target, has_minimum_rank
+from lastz_bot.permissions import can_manage_target, get_management_rank, has_minimum_rank
 
 
 class PermissionMatrixTests(unittest.TestCase):
@@ -27,10 +27,6 @@ class PermissionMatrixTests(unittest.TestCase):
     def test_unknown_actor_rank_has_no_management_access(self) -> None:
         self.assertFalse(can_manage_target("UNKNOWN", "MEMBER"))
         self.assertFalse(has_minimum_rank("UNKNOWN", "R4"))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class GetMemberRankIntegrationTests(unittest.TestCase):
@@ -120,3 +116,23 @@ class GetMemberRankIntegrationTests(unittest.TestCase):
         )
 
         self.assertIsNone(rank)
+
+    def test_management_rank_returns_r5(self) -> None:
+        rank = get_management_rank(
+            guild_id=1001,
+            alliance_name="Alpha",
+            discord_user_id=555,
+        )
+        self.assertEqual(rank, "R5")
+
+    def test_management_rank_returns_none_for_wrong_alliance(self) -> None:
+        rank = get_management_rank(
+            guild_id=1001,
+            alliance_name="Bravo",
+            discord_user_id=555,
+        )
+        self.assertIsNone(rank)
+
+
+if __name__ == "__main__":
+    unittest.main()

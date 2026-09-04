@@ -60,3 +60,23 @@ def get_member_rank(
             return None
 
         return member.rank
+
+
+def get_management_rank(
+    guild_id: int,
+    alliance_name: str,
+    discord_user_id: int,
+) -> str | None:
+    member_rank = get_member_rank(
+        guild_id=guild_id,
+        alliance_name=alliance_name,
+        discord_user_id=discord_user_id,
+    )
+
+    if member_rank is None:
+        return None
+
+    if not has_minimum_rank(member_rank, "R4"):
+        return None
+
+    return member_rank

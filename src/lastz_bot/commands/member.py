@@ -6,8 +6,7 @@ from lastz_bot.database.models import Alliance, Guild, Member
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.permissions import (
     can_manage_target,
-    get_member_rank,
-    has_minimum_rank,
+    get_management_rank,
 )
 
 
@@ -63,13 +62,13 @@ def setup_member_commands(
             return
 
         if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_member_rank(
+            actor_rank = get_management_rank(
                 guild_id=interaction.guild.id,
                 alliance_name=alliance_name,
                 discord_user_id=interaction.user.id,
             )
 
-            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+            if actor_rank is None:
                 await interaction.response.send_message(
                     "❌ You need to be an R4, R5, or Server Administrator "
                     "of this alliance to add a member.",
@@ -258,13 +257,13 @@ def setup_member_commands(
         actor_rank = None
 
         if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_member_rank(
+            actor_rank = get_management_rank(
                 guild_id=interaction.guild.id,
                 alliance_name=alliance_name,
                 discord_user_id=interaction.user.id,
             )
 
-            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+            if actor_rank is None:
                 await interaction.response.send_message(
                     "❌ You need to be an R4, R5, or Server Administrator "
                     "of this alliance to remove a member.",
@@ -366,13 +365,13 @@ def setup_member_commands(
         actor_rank = None
 
         if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_member_rank(
+            actor_rank = get_management_rank(
                 guild_id=interaction.guild.id,
                 alliance_name=alliance_name,
                 discord_user_id=interaction.user.id,
             )
 
-            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+            if actor_rank is None:
                 await interaction.response.send_message(
                     "❌ You need to be an R4, R5, or Server Administrator "
                     "of this alliance to link a member.",
@@ -474,13 +473,13 @@ def setup_member_commands(
         actor_rank = None
 
         if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_member_rank(
+            actor_rank = get_management_rank(
                 guild_id=interaction.guild.id,
                 alliance_name=alliance_name,
                 discord_user_id=interaction.user.id,
             )
 
-            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+            if actor_rank is None:
                 await interaction.response.send_message(
                     "❌ You need to be an R4, R5, or Server Administrator "
                     "of this alliance to change a member rank.",
