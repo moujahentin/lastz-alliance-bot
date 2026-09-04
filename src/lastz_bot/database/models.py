@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lastz_bot.database.base import Base
@@ -86,6 +86,10 @@ class Member(Base):
             "alliance_id",
             "discord_user_id",
             name="uq_members_alliance_id_discord_user_id",
+        ),
+        CheckConstraint(
+            "rank IN ('MEMBER', 'R4', 'R5')",
+            name="ck_members_rank_valid",
         ),
     )
 
