@@ -100,6 +100,13 @@ class Member(Base):
         nullable=False,
     )
 
+    rank: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="MEMBER",
+        server_default="MEMBER",
+    )
+
     discord_user_id: Mapped[int | None] = mapped_column(
         BigInteger,
         nullable=True,
