@@ -4,6 +4,11 @@ from sqlalchemy import select
 
 from lastz_bot.database.models import Alliance, Guild, Member
 from lastz_bot.database.session import SessionLocal
+from lastz_bot.permissions import (
+    can_manage_target,
+    get_member_rank,
+    has_minimum_rank,
+)
 
 
 def setup_member_commands(
@@ -32,23 +37,9 @@ def setup_member_commands(
             )
             return
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need the Administrator permission to add a member.",
-                ephemeral=True,
-            )
-            return
-
         alliance_name = alliance.strip()
         player_name = game_name.strip()
         member_rank = rank.strip().upper()
-
-        if member_rank not in {"MEMBER", "R4", "R5"}:
-            await interaction.response.send_message(
-                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
-                ephemeral=True,
-            )
-            return
 
         if not alliance_name:
             await interaction.response.send_message(
@@ -63,6 +54,35 @@ def setup_member_commands(
                 ephemeral=True,
             )
             return
+
+        if member_rank not in {"MEMBER", "R4", "R5"}:
+            await interaction.response.send_message(
+                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
+                ephemeral=True,
+            )
+            return
+
+        if not interaction.user.guild_permissions.administrator:
+            actor_rank = get_member_rank(
+                guild_id=interaction.guild.id,
+                alliance_name=alliance_name,
+                discord_user_id=interaction.user.id,
+            )
+
+            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+                await interaction.response.send_message(
+                    "❌ You need to be an R4, R5, or Server Administrator "
+                    "of this alliance to add a member.",
+                    ephemeral=True,
+                )
+                return
+
+            if not can_manage_target(actor_rank, member_rank):
+                await interaction.response.send_message(
+                    f"❌ Your rank `{actor_rank}` cannot create a `{member_rank}` member.",
+                    ephemeral=True,
+                )
+                return
 
         with SessionLocal() as session:
             guild = session.get(Guild, interaction.guild.id)
@@ -218,13 +238,6 @@ def setup_member_commands(
             )
             return
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need the Administrator permission to remove a member.",
-                ephemeral=True,
-            )
-            return
-
         alliance_name = alliance.strip()
         player_name = game_name.strip()
 
@@ -241,6 +254,23 @@ def setup_member_commands(
                 ephemeral=True,
             )
             return
+
+        actor_rank = None
+
+        if not interaction.user.guild_permissions.administrator:
+            actor_rank = get_member_rank(
+                guild_id=interaction.guild.id,
+                alliance_name=alliance_name,
+                discord_user_id=interaction.user.id,
+            )
+
+            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+                await interaction.response.send_message(
+                    "❌ You need to be an R4, R5, or Server Administrator "
+                    "of this alliance to remove a member.",
+                    ephemeral=True,
+                )
+                return
 
         with SessionLocal() as session:
             guild = session.get(Guild, interaction.guild.id)
@@ -280,6 +310,17 @@ def setup_member_commands(
                 )
                 return
 
+            if (
+                not interaction.user.guild_permissions.administrator
+                and actor_rank is not None
+                and not can_manage_target(actor_rank, member.rank)
+            ):
+                await interaction.response.send_message(
+                    f"❌ Your rank `{actor_rank}` cannot remove a `{member.rank}` member.",
+                    ephemeral=True,
+                )
+                return
+
             session.delete(member)
             session.commit()
 
@@ -305,13 +346,6 @@ def setup_member_commands(
             )
             return
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need the Administrator permission to link a member.",
-                ephemeral=True,
-            )
-            return
-
         alliance_name = alliance.strip()
         player_name = game_name.strip()
 
@@ -328,6 +362,23 @@ def setup_member_commands(
                 ephemeral=True,
             )
             return
+
+        actor_rank = None
+
+        if not interaction.user.guild_permissions.administrator:
+            actor_rank = get_member_rank(
+                guild_id=interaction.guild.id,
+                alliance_name=alliance_name,
+                discord_user_id=interaction.user.id,
+            )
+
+            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+                await interaction.response.send_message(
+                    "❌ You need to be an R4, R5, or Server Administrator "
+                    "of this alliance to link a member.",
+                    ephemeral=True,
+                )
+                return
 
         with SessionLocal() as session:
             alliance_record = session.scalar(
@@ -354,6 +405,17 @@ def setup_member_commands(
             if member is None:
                 await interaction.response.send_message(
                     f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
+                    ephemeral=True,
+                )
+                return
+
+            if (
+                not interaction.user.guild_permissions.administrator
+                and actor_rank is not None
+                and not can_manage_target(actor_rank, member.rank)
+            ):
+                await interaction.response.send_message(
+                    f"❌ Your rank `{actor_rank}` cannot link a `{member.rank}` member.",
                     ephemeral=True,
                 )
                 return
@@ -384,13 +446,6 @@ def setup_member_commands(
             )
             return
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need the Administrator permission to change a member rank.",
-                ephemeral=True,
-            )
-            return
-
         alliance_name = alliance.strip()
         player_name = game_name.strip()
         member_rank = rank.strip().upper()
@@ -415,6 +470,23 @@ def setup_member_commands(
                 ephemeral=True,
             )
             return
+
+        actor_rank = None
+
+        if not interaction.user.guild_permissions.administrator:
+            actor_rank = get_member_rank(
+                guild_id=interaction.guild.id,
+                alliance_name=alliance_name,
+                discord_user_id=interaction.user.id,
+            )
+
+            if actor_rank is None or not has_minimum_rank(actor_rank, "R4"):
+                await interaction.response.send_message(
+                    "❌ You need to be an R4, R5, or Server Administrator "
+                    "of this alliance to change a member rank.",
+                    ephemeral=True,
+                )
+                return
 
         with SessionLocal() as session:
             alliance_record = session.scalar(
@@ -441,6 +513,28 @@ def setup_member_commands(
             if member is None:
                 await interaction.response.send_message(
                     f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
+                    ephemeral=True,
+                )
+                return
+
+            if (
+                not interaction.user.guild_permissions.administrator
+                and actor_rank is not None
+                and not can_manage_target(actor_rank, member.rank)
+            ):
+                await interaction.response.send_message(
+                    f"❌ Your rank `{actor_rank}` cannot change a `{member.rank}` member.",
+                    ephemeral=True,
+                )
+                return
+
+            if (
+                not interaction.user.guild_permissions.administrator
+                and actor_rank is not None
+                and not can_manage_target(actor_rank, member_rank)
+            ):
+                await interaction.response.send_message(
+                    f"❌ Your rank `{actor_rank}` cannot assign rank `{member_rank}`.",
                     ephemeral=True,
                 )
                 return
