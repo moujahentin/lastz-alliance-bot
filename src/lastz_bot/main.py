@@ -7,6 +7,7 @@ from lastz_bot.commands.general import setup_general_commands
 from lastz_bot.commands.member import setup_member_commands
 from lastz_bot.commands.setup import setup_setup_commands
 from lastz_bot.config import load_settings
+from lastz_bot.reminder_worker import ReminderWorker
 
 
 class LastZBot(discord.Client):
@@ -20,10 +21,16 @@ class LastZBot(discord.Client):
         setup_general_commands(self.tree, self)
         setup_member_commands(self.tree)
         setup_setup_commands(self.tree)
+        self.reminder_worker = ReminderWorker(self)
 
     async def setup_hook(self) -> None:
         await self.tree.sync()
         print("Slash commands synchronized.")
+        self.reminder_worker.start()
+
+    async def close(self) -> None:
+        await self.reminder_worker.close()
+        await super().close()
 
     async def on_ready(self) -> None:
         if self.user is None:
