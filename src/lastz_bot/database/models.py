@@ -58,6 +58,11 @@ class Alliance(Base):
         nullable=False,
     )
 
+    reminder_channel_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -182,3 +187,33 @@ class Event(Base):
     alliance: Mapped["Alliance"] = relationship(
         back_populates="events",
     )
+
+    reminders: Mapped[list["EventReminder"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+
+class EventReminder(Base):
+    """A missing row is pending; every persisted status suppresses retries."""
+
+    __tablename__ = "event_reminders"
+    __table_args__ = (
+        CheckConstraint("lead_minutes IN (30, 10)", name="ck_event_reminders_lead"),
+        CheckConstraint(
+            "status IN ('claimed', 'sent', 'skipped')",
+            name="ck_event_reminders_status",
+        ),
+    )
+
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), primary_key=True,
+    )
+    lead_minutes: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Snapshot of the destination at claim time, absent for skipped reminders.
+    channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+    event: Mapped["Event"] = relationship(back_populates="reminders")
