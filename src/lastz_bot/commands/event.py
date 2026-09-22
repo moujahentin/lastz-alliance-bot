@@ -1,15 +1,15 @@
-from datetime import datetime, timedelta, timezone
-
 import discord
 from discord import app_commands
 from sqlalchemy import select
 
 from lastz_bot.database.models import Alliance, Event, Guild
 from lastz_bot.database.session import SessionLocal
+from lastz_bot.event_time import (
+    parse_apocalypse_time,
+    utc_now_naive,
+    utc_to_apocalypse_time,
+)
 from lastz_bot.permissions import get_management_rank
-
-
-APOCALYPSE_TIMEZONE = timezone(timedelta(hours=-2))
 
 
 def setup_event_commands(
@@ -57,16 +57,7 @@ def setup_event_commands(
             return
 
         try:
-            apocalypse_starts_at = datetime.strptime(
-                starts_at.strip(),
-                "%Y-%m-%d %H:%M",
-            ).replace(tzinfo=APOCALYPSE_TIMEZONE)
-
-            event_starts_at = (
-                apocalypse_starts_at
-                .astimezone(timezone.utc)
-                .replace(tzinfo=None)
-            )
+            event_starts_at = parse_apocalypse_time(starts_at)
         except ValueError:
             await interaction.response.send_message(
                 "❌ Start time must use format `YYYY-MM-DD HH:MM`.",
@@ -124,6 +115,7 @@ def setup_event_commands(
             session.add(event)
             session.commit()
 
+        apocalypse_starts_at = utc_to_apocalypse_time(event_starts_at)
         await interaction.response.send_message(
             f"✅ Event `{event_name}` created for alliance `{alliance_name}` "
             f"at `{apocalypse_starts_at:%Y-%m-%d %H:%M}` Apocalypse Time.",
@@ -182,7 +174,7 @@ def setup_event_commands(
                 select(Event)
                 .where(
                     Event.alliance_id == alliance_record.id,
-                    Event.starts_at >= datetime.now(timezone.utc).replace(tzinfo=None),
+                    Event.starts_at >= utc_now_naive(),
                 )
                 .order_by(Event.starts_at)
             ).all()
@@ -197,11 +189,7 @@ def setup_event_commands(
         event_lines = []
 
         for event in events:
-            apocalypse_starts_at = (
-                event.starts_at
-                .replace(tzinfo=timezone.utc)
-                .astimezone(APOCALYPSE_TIMEZONE)
-            )
+            apocalypse_starts_at = utc_to_apocalypse_time(event.starts_at)
 
             line = (
                 f"• `{apocalypse_starts_at:%Y-%m-%d %H:%M}` AT "
