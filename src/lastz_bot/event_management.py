@@ -74,6 +74,8 @@ def edit_event(
         session.execute(text("BEGIN IMMEDIATE"))
         event = _managed_event(session, guild_id, event_id, actor_id, administrator)
         rescheduled = new_start is not None and new_start != event.starts_at
+        if event.series_id is not None:
+            raise EventManagementError("❌ This is a weekly occurrence. Use `/event edit-series` with its series ID.")
         if name is not None:
             event.name = name
         if description is not None:
@@ -96,8 +98,9 @@ def delete_event(
     with sessions() as session:
         session.execute(text("BEGIN IMMEDIATE"))
         event = _managed_event(session, guild_id, event_id, actor_id, administrator)
-        # Use the existing database ON DELETE CASCADE, not a separate reminder
-        # delete that could leave partial state. SessionLocal enables SQLite FKs.
+        if event.series_id is not None:
+            raise EventManagementError("❌ This is a weekly occurrence. Use `/event stop-series` with its series ID.")
+        # Delete atomically using ON DELETE CASCADE. SessionLocal enables FKs.
         session.execute(delete(Event).where(
             Event.id == event.id, Event.alliance_id == event.alliance_id,
         ))
