@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -26,6 +27,7 @@ class ReminderMigrationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.config = Config(str(root / "alembic.ini"), stdout=StringIO())
         self.config.set_main_option("script_location", str(root / "migrations"))
+        self.head = ScriptDirectory.from_config(self.config).get_current_head()
         self.engine = create_engine(url)
         self.addCleanup(self.engine.dispose)
 
@@ -55,10 +57,10 @@ class ReminderMigrationTests(unittest.TestCase):
             self.assertIsNone(connection.scalar(text("SELECT reminder_channel_id FROM alliances")))
             self.assertEqual(connection.scalar(text("SELECT starts_at FROM events")), "2026-09-25 19:00:00.000000")
             self.assertEqual(connection.scalar(text("SELECT COUNT(*) FROM event_reminders")), 0)
-            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), "72c03cfe92ad")
+            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), self.head)
         command.current(self.config)
         command.check(self.config)
-        self.assertIn("72c03cfe92ad (head)", self.config.stdout.getvalue())
+        self.assertIn(f"{self.head} (head)", self.config.stdout.getvalue())
         self.assertIn("No new upgrade operations detected", self.config.stdout.getvalue())
 
     def test_constraints_enforce_two_unique_opportunities_and_valid_status(self):
@@ -92,3 +94,19 @@ class ReminderMigrationTests(unittest.TestCase):
             self.assertEqual(connection.scalar(text("SELECT starts_at FROM events")), "2026-09-25 19:00:00.000000")
         command.upgrade(self.config, "head")
         command.check(self.config)
+
+    def test_claim_token_upgrade_preserves_legacy_terminal_records(self):
+        command.downgrade(self.config, "72c03cfe92ad")
+        self.insert_reminder(lead=30, status="claimed")
+        self.insert_reminder(lead=10, status="sent")
+        command.upgrade(self.config, "head")
+        with self.engine.connect() as connection:
+            rows = connection.execute(text(
+                "SELECT lead_minutes, status, claim_token FROM event_reminders ORDER BY lead_minutes"
+            )).all()
+        self.assertEqual(rows, [(10, "sent", None), (30, "claimed", None)])
+        command.check(self.config)
+        command.downgrade(self.config, "72c03cfe92ad")
+        self.assertNotIn("claim_token", {c["name"] for c in inspect(self.engine).get_columns("event_reminders")})
+        with self.engine.connect() as connection:
+            self.assertEqual(connection.scalar(text("SELECT COUNT(*) FROM event_reminders")), 2)

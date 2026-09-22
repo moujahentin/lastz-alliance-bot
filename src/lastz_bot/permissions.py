@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from lastz_bot.database.models import Alliance, Member
 from lastz_bot.database.session import SessionLocal
@@ -37,8 +40,11 @@ def get_member_rank(
     guild_id: int,
     alliance_name: str,
     discord_user_id: int,
+    *,
+    session: Session | None = None,
 ) -> str | None:
-    with SessionLocal() as session:
+    # Mutations can check permissions inside their own database transaction.
+    with (nullcontext(session) if session is not None else SessionLocal()) as session:
         alliance = session.scalar(
             select(Alliance).where(
                 Alliance.guild_id == guild_id,
@@ -66,11 +72,14 @@ def get_management_rank(
     guild_id: int,
     alliance_name: str,
     discord_user_id: int,
+    *,
+    session: Session | None = None,
 ) -> str | None:
     member_rank = get_member_rank(
         guild_id=guild_id,
         alliance_name=alliance_name,
         discord_user_id=discord_user_id,
+        session=session,
     )
 
     if member_rank is None:

@@ -22,6 +22,9 @@ class ReminderWorker:
         self.processor = ReminderProcessor(SessionLocal, self.send)
 
     async def send(self, delivery: ReminderDelivery) -> None:
+        delivery = self.processor.current_delivery(delivery)
+        if delivery is None:
+            raise RuntimeError("Reminder claim was deleted or reset")
         guild = self.client.get_guild(delivery.guild_id)
         channel = guild.get_channel(delivery.channel_id) if guild is not None else None
         if not isinstance(channel, discord.TextChannel) or channel.guild.id != delivery.guild_id:

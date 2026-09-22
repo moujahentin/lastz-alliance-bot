@@ -211,6 +211,9 @@ class EventReminder(Base):
     )
     lead_minutes: Mapped[int] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Distinguish a claim from a later replacement after an event reschedule.
+    # Legacy terminal records and skipped opportunities may have no token.
+    claim_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Snapshot of the destination at claim time, absent for skipped reminders.
     channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)

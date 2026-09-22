@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from lastz_bot.commands.event import setup_event_commands
 from lastz_bot.database.base import Base
-from lastz_bot.database.models import Alliance, Event, Guild, Member
+from lastz_bot.database.models import Alliance, Event, EventReminder, Guild, Member
 
 
 class EventCommandTests(unittest.IsolatedAsyncioTestCase):
@@ -41,6 +41,8 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
         group = tree.add_command.call_args.args[0]
         self.create = group.get_command("create").callback
         self.list_events = group.get_command("list").callback
+        self.edit = group.get_command("edit").callback
+        self.delete = group.get_command("delete").callback
 
         with self.sessions() as session:
             session.add_all([Guild(id=1001, name="One"), Guild(id=2002, name="Two")])
@@ -80,11 +82,13 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
 
     def add_event(self, alliance_id, name, starts_at, description=None):
         with self.sessions() as session:
-            session.add(Event(
+            record = Event(
                 alliance_id=alliance_id, name=name, starts_at=starts_at,
                 description=description, created_by_discord_user_id=20,
-            ))
+            )
+            session.add(record)
             session.commit()
+            return record.id
 
     async def test_create_sqlite_storage_and_at_display_round_trip(self):
         interaction = self.interaction()
@@ -109,7 +113,7 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
         await self.list_events(listing, " Alpha ")
         self.assert_response(
             listing,
-            "**Upcoming events for `Alpha`:**\n• `2026-09-25 17:00` AT — **Duel** — Prepare",
+            "**Upcoming events for `Alpha`:**\n• ID `1` — `2026-09-25 17:00` AT — **Duel** — Prepare",
         )
 
     async def test_midnight_round_trip_through_sqlite(self):
@@ -122,7 +126,7 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
         await self.list_events(listing, "Alpha")
         self.assert_response(
             listing,
-            "**Upcoming events for `Alpha`:**\n• `2026-12-31 23:30` AT — **Reset**",
+            "**Upcoming events for `Alpha`:**\n• ID `1` — `2026-12-31 23:30` AT — **Reset**",
         )
 
     async def test_r4_r5_and_unlinked_administrator_can_create(self):
@@ -173,8 +177,8 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assert_response(
             listing,
             "**Upcoming events for `Alpha`:**\n"
-            "• `2026-09-25 16:00` AT — **Now**\n"
-            "• `2026-09-25 17:00` AT — **Later**",
+            "• ID `2` — `2026-09-25 16:00` AT — **Now**\n"
+            "• ID `1` — `2026-09-25 17:00` AT — **Later**",
         )
 
     async def test_invalid_time_keeps_existing_error_and_does_not_write(self):
@@ -197,3 +201,197 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
                     await command(interaction, alliance, *args)
                     self.assert_response(interaction, expected)
                     self.assertEqual(self.stored_events(), [])
+
+    def add_managed_event(self, alliance_id=1):
+        event_id = self.add_event(alliance_id, "Duel", datetime(2026, 9, 25, 19), "Prepare")
+        with self.sessions() as session:
+            session.add_all([
+                EventReminder(
+                    event_id=event_id, lead_minutes=30, status="sent",
+                    recorded_at=self.now, sent_at=self.now, claim_token="old-30", channel_id=101,
+                ),
+                EventReminder(
+                    event_id=event_id, lead_minutes=10, status="claimed",
+                    recorded_at=self.now, claim_token="old-10", channel_id=101,
+                ),
+            ])
+            session.commit()
+        return event_id
+
+    def reminder_snapshot(self):
+        with self.sessions() as session:
+            return session.execute(select(
+                EventReminder.event_id, EventReminder.lead_minutes, EventReminder.status,
+                EventReminder.claim_token, EventReminder.recorded_at, EventReminder.sent_at,
+                EventReminder.channel_id,
+            ).order_by(EventReminder.event_id, EventReminder.lead_minutes)).all()
+
+    async def test_list_ids_distinguish_same_named_events(self):
+        first = self.add_event(1, "Duel", self.now)
+        second = self.add_event(1, "Duel", self.now + timedelta(minutes=1))
+        interaction = self.interaction()
+        await self.list_events(interaction, "Alpha")
+        self.assert_response(interaction,
+            f"**Upcoming events for `Alpha`:**\n"
+            f"• ID `{first}` — `2026-09-25 16:00` AT — **Duel**\n"
+            f"• ID `{second}` — `2026-09-25 16:01` AT — **Duel**",
+        )
+
+    async def test_name_edit_preserves_other_fields_and_reminders(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        interaction = self.interaction()
+        await self.edit(interaction, event_id, name=" Canyon ")
+        stored, = self.stored_events()
+        self.assertEqual((stored.name, stored.description, stored.starts_at),
+                         ("Canyon", "Prepare", datetime(2026, 9, 25, 19)))
+        self.assertEqual(self.reminder_snapshot(), before)
+        self.assert_response(interaction,
+            f"✅ Event `{event_id}` updated. Starts at `2026-09-25 17:00` Apocalypse Time.",
+        )
+
+    async def test_description_edit_and_clear_preserve_reminders(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        for value, expected in ((" New instructions ", "New instructions"), (" ", None)):
+            with self.subTest(value=value):
+                interaction = self.interaction()
+                await self.edit(interaction, event_id, description=value)
+                stored, = self.stored_events()
+                self.assertEqual(stored.description, expected)
+                self.assertEqual(stored.name, "Duel")
+                self.assertEqual(stored.starts_at, datetime(2026, 9, 25, 19))
+                self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_at_reschedule_changes_utc_and_resets_only_target_reminders(self):
+        event_id = self.add_managed_event()
+        other_id = self.add_managed_event(2)
+        other_before = [row for row in self.reminder_snapshot() if row.event_id == other_id]
+        interaction = self.interaction()
+        await self.edit(interaction, event_id, starts_at=" 2026-12-31 23:30 ")
+        with self.sessions() as session:
+            record = session.get(Event, event_id)
+            self.assertEqual(record.starts_at, datetime(2027, 1, 1, 1, 30))
+            self.assertIsNone(record.starts_at.tzinfo)
+            self.assertEqual((record.name, record.description), ("Duel", "Prepare"))
+            self.assertEqual(session.scalar(text("SELECT starts_at FROM events WHERE id = :id").bindparams(id=event_id)),
+                             "2027-01-01 01:30:00.000000")
+        self.assertEqual(self.reminder_snapshot(), other_before)
+        self.assert_response(interaction,
+            f"✅ Event `{event_id}` updated. Starts at `2026-12-31 23:30` Apocalypse Time.",
+        )
+
+    async def test_same_start_time_does_not_reset_reminders(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        await self.edit(self.interaction(), event_id, starts_at="2026-9-25 17:00", name="Renamed")
+        self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_edit_all_fields_together(self):
+        event_id = self.add_managed_event()
+        await self.edit(self.interaction(), event_id, name="New", description="Changed",
+                        starts_at="2026-09-26 08:00")
+        stored, = self.stored_events()
+        self.assertEqual((stored.name, stored.description, stored.starts_at),
+                         ("New", "Changed", datetime(2026, 9, 26, 10)))
+        self.assertEqual(self.reminder_snapshot(), [])
+
+    async def test_delete_uses_database_cascade_and_preserves_other_events(self):
+        event_id = self.add_managed_event()
+        other_id = self.add_managed_event(2)
+        other_before = [row for row in self.reminder_snapshot() if row.event_id == other_id]
+        interaction = self.interaction()
+        await self.delete(interaction, event_id)
+        self.assertEqual([item.id for item in self.stored_events()], [other_id])
+        self.assertEqual(self.reminder_snapshot(), other_before)
+        self.assert_response(interaction, f"✅ Event `{event_id}` deleted.")
+
+    async def test_r4_r5_and_unlinked_admin_can_edit_and_delete(self):
+        for user_id, admin in ((10, False), (20, False), (99, True)):
+            with self.subTest(user_id=user_id):
+                event_id = self.add_managed_event()
+                await self.edit(self.interaction(user_id=user_id, admin=admin), event_id, name="New")
+                self.assertEqual(self.stored_events()[0].name, "New")
+                interaction = self.interaction(user_id=user_id, admin=admin)
+                await self.delete(interaction, event_id)
+                self.assert_response(interaction, f"✅ Event `{event_id}` deleted.")
+                self.assertEqual(self.stored_events(), [])
+                self.assertEqual(self.reminder_snapshot(), [])
+
+    async def test_member_unlinked_and_foreign_officers_cannot_edit_or_delete(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        for command in (self.edit, self.delete):
+            for user_id in (30, 99, 40, 50):
+                with self.subTest(command=command.__name__, user_id=user_id):
+                    interaction = self.interaction(user_id=user_id)
+                    options = {"name": "Forbidden"} if command is self.edit else {}
+                    await command(interaction, event_id, **options)
+                    self.assert_response(interaction,
+                        "❌ Event not found in this server, or you do not have permission to manage it.",
+                    )
+                    self.assertEqual(self.stored_events()[0].name, "Duel")
+                    self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_cross_alliance_and_guild_event_ids_are_isolated(self):
+        bravo = self.add_managed_event(2)
+        foreign = self.add_managed_event(3)
+        before = self.reminder_snapshot()
+        for command in (self.edit, self.delete):
+            for event_id, admin in ((bravo, False), (foreign, False), (foreign, True)):
+                with self.subTest(command=command.__name__, event_id=event_id, admin=admin):
+                    interaction = self.interaction(admin=admin)
+                    options = {"name": "Forbidden"} if command is self.edit else {}
+                    await command(interaction, event_id, **options)
+                    self.assert_response(interaction,
+                        "❌ Event not found in this server, or you do not have permission to manage it.",
+                    )
+                    self.assertEqual(len(self.stored_events()), 2)
+                    self.assertTrue(all(e.name == "Duel" for e in self.stored_events()))
+                    self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_foreign_officer_can_manage_own_same_named_alliance_only(self):
+        local_id = self.add_managed_event()
+        foreign_id = self.add_managed_event(3)
+        await self.edit(self.interaction(user_id=50, guild_id=2002), foreign_id, name="Foreign edit")
+        await self.delete(self.interaction(user_id=50, guild_id=2002), foreign_id)
+        self.assertEqual([e.id for e in self.stored_events()], [local_id])
+        self.assertEqual(len(self.reminder_snapshot()), 2)
+
+    async def test_unknown_wrong_and_deleted_ids_are_safe(self):
+        deleted_id = self.add_managed_event()
+        await self.delete(self.interaction(), deleted_id)
+        for command in (self.edit, self.delete):
+            for event_id in (-1, 0, 999, deleted_id):
+                interaction = self.interaction(admin=True)
+                options = {"description": "Changed"} if command is self.edit else {}
+                await command(interaction, event_id, **options)
+                self.assert_response(interaction,
+                    "❌ Event not found in this server, or you do not have permission to manage it.",
+                )
+        self.assertEqual(self.stored_events(), [])
+
+    async def test_invalid_edit_is_atomic_and_keeps_reminders(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        for options, expected in (
+            ({}, "❌ Provide at least one field to edit."),
+            ({"name": " "}, "❌ Event name cannot be empty."),
+            ({"name": "New", "starts_at": "2026-02-30 17:00"},
+             "❌ Start time must use format `YYYY-MM-DD HH:MM`."),
+        ):
+            with self.subTest(options=options):
+                interaction = self.interaction()
+                await self.edit(interaction, event_id, **options)
+                self.assert_response(interaction, expected)
+                self.assertEqual(self.stored_events()[0].name, "Duel")
+                self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_edit_and_delete_require_a_server(self):
+        for command in (self.edit, self.delete):
+            interaction = self.interaction(guild_id=None)
+            options = {"name": "New"} if command is self.edit else {}
+            await command(interaction, 1, **options)
+            self.assert_response(interaction,
+                "❌ This command can only be used inside a Discord server.",
+            )

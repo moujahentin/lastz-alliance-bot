@@ -6,9 +6,10 @@ trades a possible lost message for suppressing duplicate application sends.
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import logging
+from uuid import uuid4
 
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import sessionmaker
@@ -38,6 +39,7 @@ class ReminderDelivery:
     event_name: str
     starts_at: datetime
     lead_minutes: int
+    claim_token: str
 
 
 class ReminderProcessor:
@@ -86,17 +88,59 @@ class ReminderProcessor:
                 alliance.reminder_channel_id is not None
                 and session.get(EventReminder, (event.id, lead)) is None
             ):
+                claim_token = uuid4().hex
                 session.add(EventReminder(
                     event_id=event.id, lead_minutes=lead, status="claimed",
                     channel_id=alliance.reminder_channel_id, recorded_at=now,
+                    claim_token=claim_token,
                 ))
                 delivery = ReminderDelivery(
                     event.id, alliance.id, alliance.guild_id,
                     alliance.reminder_channel_id, alliance.name, event.name,
-                    event.starts_at, lead,
+                    event.starts_at, lead, claim_token,
                 )
             session.commit()
             return delivery
+
+    def current_delivery(self, delivery: ReminderDelivery) -> ReminderDelivery | None:
+        """Reject deleted/reset claims and refresh event text before sending.
+
+        Tokens also prevent stale work from becoming valid when a schedule is
+        changed away and back, or SQLite reuses a deleted event's integer ID.
+        """
+        with self.sessions() as session:
+            row = session.execute(
+                select(Event, Alliance)
+                .join(Alliance, Event.alliance_id == Alliance.id)
+                .join(EventReminder, EventReminder.event_id == Event.id)
+                .where(
+                    Event.id == delivery.event_id,
+                    Event.alliance_id == delivery.alliance_id,
+                    Alliance.guild_id == delivery.guild_id,
+                    Event.starts_at == delivery.starts_at,
+                    EventReminder.lead_minutes == delivery.lead_minutes,
+                    EventReminder.claim_token == delivery.claim_token,
+                    EventReminder.channel_id == delivery.channel_id,
+                    EventReminder.status == "claimed",
+                )
+            ).first()
+            if row is None:
+                return None
+            event, alliance = row
+            return replace(delivery, event_name=event.name, alliance_name=alliance.name)
+
+    def mark_sent(self, delivery: ReminderDelivery) -> None:
+        """An old in-flight send must never mark a replacement claim as sent."""
+        with self.sessions() as session:
+            session.execute(
+                update(EventReminder).where(
+                    EventReminder.event_id == delivery.event_id,
+                    EventReminder.lead_minutes == delivery.lead_minutes,
+                    EventReminder.claim_token == delivery.claim_token,
+                    EventReminder.status == "claimed",
+                ).values(status="sent", sent_at=self.clock())
+            )
+            session.commit()
 
     async def process_pending(self) -> None:
         now = self.clock()
@@ -123,12 +167,4 @@ class ReminderProcessor:
                     delivery.event_id, delivery.lead_minutes,
                 )
                 continue
-            with self.sessions() as session:
-                session.execute(
-                    update(EventReminder).where(
-                        EventReminder.event_id == delivery.event_id,
-                        EventReminder.lead_minutes == delivery.lead_minutes,
-                        EventReminder.status == "claimed",
-                    ).values(status="sent", sent_at=self.clock())
-                )
-                session.commit()
+            self.mark_sent(delivery)

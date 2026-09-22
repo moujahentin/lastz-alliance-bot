@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from lastz_bot.database.models import Alliance, Event, Guild
 from lastz_bot.database.session import SessionLocal
+from lastz_bot.event_management import EventManagementError, delete_event, edit_event
 from lastz_bot.event_time import (
     parse_apocalypse_time,
     utc_now_naive,
@@ -192,7 +193,7 @@ def setup_event_commands(
             apocalypse_starts_at = utc_to_apocalypse_time(event.starts_at)
 
             line = (
-                f"• `{apocalypse_starts_at:%Y-%m-%d %H:%M}` AT "
+                f"• ID `{event.id}` — `{apocalypse_starts_at:%Y-%m-%d %H:%M}` AT "
                 f"— **{event.name}**"
             )
 
@@ -206,5 +207,63 @@ def setup_event_commands(
             + "\n".join(event_lines),
             ephemeral=True,
         )
+
+    @event_group.command(name="edit", description="Edit an alliance event by ID.")
+    @app_commands.describe(
+        event_id="Event ID shown by /event list.",
+        name="New name; omit to keep the current name.",
+        starts_at="New Apocalypse Time (YYYY-MM-DD HH:MM); omit to keep it.",
+        description="New description; omit to keep it, or use a space to clear it.",
+    )
+    async def edit(
+        interaction: discord.Interaction,
+        event_id: app_commands.Range[int, 1],
+        name: str | None = None,
+        starts_at: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+        try:
+            result = edit_event(
+                SessionLocal, interaction.guild.id, event_id, interaction.user.id,
+                interaction.user.guild_permissions.administrator,
+                name=name, starts_at=starts_at, description=description,
+            )
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        apocalypse_starts_at = utc_to_apocalypse_time(result.starts_at)
+        await interaction.response.send_message(
+            f"✅ Event `{event_id}` updated. "
+            f"Starts at `{apocalypse_starts_at:%Y-%m-%d %H:%M}` Apocalypse Time.",
+            ephemeral=True,
+        )
+
+    @event_group.command(name="delete", description="Delete an alliance event by ID.")
+    @app_commands.describe(event_id="Event ID shown by /event list.")
+    async def delete(
+        interaction: discord.Interaction,
+        event_id: app_commands.Range[int, 1],
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+        try:
+            delete_event(
+                SessionLocal, interaction.guild.id, event_id, interaction.user.id,
+                interaction.user.guild_permissions.administrator,
+            )
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(f"✅ Event `{event_id}` deleted.", ephemeral=True)
 
     tree.add_command(event_group)
