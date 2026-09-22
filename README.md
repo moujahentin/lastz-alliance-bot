@@ -98,6 +98,79 @@ claims. Existing claimed/sent/skipped records remain terminal. Stop old bot
 processes, run `alembic upgrade head`, then start the updated bot so all workers
 use the token checks.
 
+### Weekly events and occurrence history
+
+`/event create` accepts optional `recurrence:once|weekly` (default `once`). For
+weekly events, `starts_at` supplies the first date, weekday, and time in AT. For
+example, `starts_at:2026-09-22 17:00 recurrence:weekly` schedules Tuesdays at
+17:00 AT. One-time create/edit/delete behavior stays unchanged.
+
+`/event list` shows upcoming concrete occurrences chronologically. Weekly rows
+show **Occurrence ID**, **Series ID**, and **🔁 Weekly**. Manage the template with
+`/event edit-series series_id:<id>` using optional `name`, `description`,
+`weekday`, and `time_at` (`HH:MM` AT). Omitted fields stay unchanged; whitespace
+clears a description. `/event stop-series series_id:<id>` deactivates the series
+and cancels its future occurrences, retaining their IDs and records. R4/R5
+members of the alliance and administrators of its server can manage a series.
+The one-time edit/delete commands reject weekly occurrence IDs and direct the
+officer to the series commands. Per-occurrence editing UI is not included yet.
+
+The existing `events` table now represents the first-class `EventOccurrence`
+model (`Event` remains a compatibility alias). Each row has its own ID, concrete
+UTC-naive `starts_at`, and reminder records. Migration `c41e62b79a10` preserves
+existing one-time IDs, values, and delivery state in place; their series fields
+remain null. New `event_series` rows hold alliance-owned templates and active
+state. `weekly_schedules` holds versioned AT rules, text snapshots, and durable
+backfill cursors. Rule `anchor_at`/`next_slot_at` are explicitly AT wall times;
+occurrence `starts_at` and rule end cutoffs are UTC-naive instants.
+
+Before reminder processing, each 30-second worker cycle ensures the next future
+slot for every active series. It examines at most **50 historical slots total**
+per cycle, including duplicates already present. Each rule's transaction has at
+most 50 historical insert attempts plus one future attempt. Further cycles
+continue the persisted cursor. Creation with a past first date also backfills
+up to 50 slots initially. Listing performs the same bounded work for only the
+requested guild/alliance. A long history backlog never delays the next live
+occurrence. Unique rule/nominal-slot constraints prevent duplicate occurrences
+across restarts and concurrent generation.
+
+Backfilled rows represent **scheduled occurrences**, not proof of completion
+or attendance. Time passing never changes their `scheduled` status. Historical
+rows remain in place indefinitely; future attendance can reference their stable
+occurrence IDs. There is no attendance inference or attendance feature here.
+No reminder is sent for an expired occurrence. Each future occurrence has its
+own independent 30/10-minute opportunities with the existing latest-threshold,
+persisted-claim, and uncertain-delivery duplicate-suppression rules.
+
+Metadata edits preserve future occurrence IDs/times and reminder state. A weekly
+weekday/time change closes the old rule at the edit time, cancels its obsolete
+future occurrences, invalidates their claim tokens, and creates the next slot
+under a new rule. Past occurrences and their reminder records stay unchanged.
+Closed rules retain their original text and finish bounded historical backfill,
+even after edits or stops. Cancelled future rows are retained as scheduled-plan
+history and are excluded from upcoming lists and reminder eligibility.
+
+An occurrence's `nominal_at` identifies its original AT slot independently of
+its actual `starts_at`. Together with `is_exception` and the reserved
+scheduled/completed/cancelled status values, this permits future single-slot
+reschedules and cancellations without losing the original identity or changing
+later weeks. Versioned rules support a future “this and future” operation.
+Metadata edits retain existing exception overrides. Full exception management
+and attendance UI remain future work.
+
+Generation, series changes/stops, and reminder claims serialize through short
+SQLite `BEGIN IMMEDIATE` transactions. Composite foreign keys enforce matching
+alliance/series/rule ownership; a partial unique index allows only one open rule
+per series. The sender's final token/status check rejects obsolete work, and an
+old completion cannot update a new occurrence's reminder. As with one-time
+edits, a Discord request already in flight cannot be recalled. No database lock
+is held across Discord I/O.
+
+Stop old bot processes and run `alembic upgrade head` before deploying this
+version. Downgrade to the preceding schema preserves one-time data when no
+weekly series exist; it deliberately refuses to discard any weekly series or
+history. Back up the database before migration.
+
 ## Technology
 
 - Python

@@ -11,14 +11,22 @@ from datetime import datetime, timedelta
 import logging
 from uuid import uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import exists, or_, select, text, update
 from sqlalchemy.orm import sessionmaker
 
-from lastz_bot.database.models import Alliance, Event, EventReminder
+from lastz_bot.database.models import Alliance, Event, EventReminder, EventSeries
 from lastz_bot.event_time import utc_now_naive
+from lastz_bot.recurrence import ensure_occurrences
 
 
 logger = logging.getLogger(__name__)
+
+
+def active_occurrence():
+    return (Event.status == "scheduled") & or_(
+        Event.series_id.is_(None),
+        exists().where(EventSeries.id == Event.series_id, EventSeries.active.is_(True)),
+    )
 
 
 def eligible_threshold(starts_at: datetime, now: datetime) -> int | None:
@@ -65,7 +73,7 @@ class ReminderProcessor:
             row = session.execute(
                 select(Event, Alliance)
                 .join(Alliance, Event.alliance_id == Alliance.id)
-                .where(Event.id == event_id)
+                .where(Event.id == event_id, active_occurrence())
             ).first()
             if row is None:
                 return None
@@ -115,6 +123,7 @@ class ReminderProcessor:
                 .join(EventReminder, EventReminder.event_id == Event.id)
                 .where(
                     Event.id == delivery.event_id,
+                    active_occurrence(),
                     Event.alliance_id == delivery.alliance_id,
                     Alliance.guild_id == delivery.guild_id,
                     Event.starts_at == delivery.starts_at,
@@ -144,10 +153,12 @@ class ReminderProcessor:
 
     async def process_pending(self) -> None:
         now = self.clock()
+        ensure_occurrences(self.sessions, now)
         with self.sessions() as session:
             event_ids = session.scalars(
                 select(Event.id).where(
                     Event.starts_at > now,
+                    active_occurrence(),
                     Event.starts_at <= now + timedelta(minutes=30),
                 ).order_by(Event.starts_at, Event.id)
             ).all()
