@@ -64,6 +64,40 @@ the alliance channel setting and delivery-state table; existing events require
 no backfill. The scheduler derives pending work from event times and missing
 delivery records, including events created before the migration.
 
+### Editing and deleting events
+
+`/event list alliance:<name>` includes each event's ID. R4/R5 members of the
+event's alliance and Server Administrators can use `/event edit event_id:<id>`
+or `/event delete event_id:<id>` in that alliance's server. Event IDs from other
+servers or inaccessible alliances do not grant access.
+
+Edit accepts optional `name`, `starts_at`, and `description` fields. Omitted
+fields stay unchanged; provide at least one field. `starts_at` uses the same
+`YYYY-MM-DD HH:MM` Apocalypse Time format as create. A whitespace-only description
+clears it; a whitespace-only name is rejected. For example,
+`/event edit event_id:12 starts_at:2026-09-26 17:00` changes only the start time.
+
+An actual start-time change atomically removes that event's old reminder records
+and stores the new UTC time. The worker derives fresh opportunities using the
+existing latest-threshold-only and no-after-start rules. Name/description-only
+edits, or re-entering the same start time, preserve reminder state. Delete uses
+the database's existing cascade to remove the event and its reminders together.
+
+Edit/delete and reminder claims use short SQLite write transactions, with no
+network calls while holding the write lock. Each new reminder claim has a unique
+token: the sender rechecks it before starting a send, and completion only updates
+that exact claim. A stale send cannot mark a replacement reminder as sent, even
+if the event is rescheduled away and back or a deleted integer ID is reused.
+Changes committed before the final send check suppress stale work. A Discord
+request already in flight (or a change from another process after that check)
+cannot be recalled; it may still arrive, but cannot corrupt the new reminder
+state. No distributed lock or database transaction is held across Discord I/O.
+
+Migration `9fd174f83e21` adds the claim token needed to distinguish replacement
+claims. Existing claimed/sent/skipped records remain terminal. Stop old bot
+processes, run `alembic upgrade head`, then start the updated bot so all workers
+use the token checks.
+
 ## Technology
 
 - Python

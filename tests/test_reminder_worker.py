@@ -20,7 +20,10 @@ class ReminderWorkerTests(unittest.IsolatedAsyncioTestCase):
             event_id=1, alliance_id=1, guild_id=1001, channel_id=101,
             alliance_name="Alpha", event_name="Duel @everyone",
             starts_at=datetime(2026, 9, 25, 19), lead_minutes=30,
+            claim_token="test-claim",
         )
+        # Transport unit tests; persistent claim checks have integration coverage.
+        self.worker.processor.current_delivery = Mock(return_value=self.delivery)
         clock = patch("lastz_bot.reminder_worker.utc_now_naive", return_value=datetime(2026, 9, 25, 18, 30))
         self.clock = clock.start()
         self.addCleanup(clock.stop)
