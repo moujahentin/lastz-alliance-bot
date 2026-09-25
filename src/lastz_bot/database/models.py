@@ -98,7 +98,7 @@ class Member(Base):
             name="uq_members_alliance_id_discord_user_id",
         ),
         CheckConstraint(
-            "rank IN ('MEMBER', 'R4', 'R5')",
+            "rank IN ('R1', 'R2', 'R3', 'R4', 'R5')",
             name="ck_members_rank_valid",
         ),
     )
@@ -119,11 +119,13 @@ class Member(Base):
         nullable=False,
     )
 
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+
     rank: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        default="MEMBER",
-        server_default="MEMBER",
+        default="R1",
+        server_default="R1",
     )
 
     discord_user_id: Mapped[int | None] = mapped_column(
@@ -150,8 +152,10 @@ class EventSeries(Base):
     __table_args__ = (
         UniqueConstraint("id", "alliance_id", name="uq_series_id_alliance"),
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_series_participation"),
+        CheckConstraint("audience BETWEEN 1 AND 31", name="ck_series_audience"),
     )
 
+    audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -177,9 +181,11 @@ class WeeklySchedule(Base):
     __table_args__ = (
         UniqueConstraint("id", "series_id", name="uq_schedule_id_series"),
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_schedule_participation"),
+        CheckConstraint("audience BETWEEN 1 AND 31", name="ck_schedule_audience"),
         Index("uq_weekly_schedule_open", "series_id", unique=True, sqlite_where=text("ends_at IS NULL")),
     )
 
+    audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -214,13 +220,16 @@ class EventOccurrence(Base):
         ),
         CheckConstraint("status IN ('scheduled', 'completed', 'cancelled')", name="ck_occurrence_status"),
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_occurrence_participation"),
+        CheckConstraint("audience BETWEEN 1 AND 31", name="ck_occurrence_audience"),
     )
 
+    audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     series_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     schedule_id: Mapped[int | None] = mapped_column(nullable=True)
-    # Reserved for future occurrence-only participation commands.
+    # Independent flags reserved for future occurrence-only configuration commands.
+    audience_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     participation_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Original AT slot identifies the occurrence even if starts_at is overridden.
     nominal_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
@@ -340,3 +349,34 @@ class EventPublication(Base):
     channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
+class MembershipChange(Base):
+    """Durable membership snapshots; migration baselines have no human actor."""
+    __tablename__ = "membership_changes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_rank: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    new_rank: Mapped[str] = mapped_column(String(20), nullable=False)
+    previous_active: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    new_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    previous_discord_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    new_discord_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+class EventAudienceChange(Base):
+    """One-time audience revisions. Weekly history lives in WeeklySchedule."""
+    __tablename__ = "event_audience_changes"
+    __table_args__ = (
+        CheckConstraint("new_audience BETWEEN 1 AND 31", name="ck_audience_change_new"),
+        CheckConstraint("previous_audience IS NULL OR previous_audience BETWEEN 1 AND 31", name="ck_audience_change_previous"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_audience: Mapped[int | None] = mapped_column(nullable=True)
+    new_audience: Mapped[int] = mapped_column(nullable=False)
+    actor_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)

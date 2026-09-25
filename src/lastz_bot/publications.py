@@ -21,6 +21,7 @@ class CardState:
     participation: str
     closed: bool
     status: str
+    audience: int
     counts: tuple[int, int, int]  # Going, Maybe, Not Going.
 
 
@@ -62,6 +63,7 @@ def _read_card(session, event_id: int, guild_id: int) -> CardState | None:
         occurrence.id, occurrence.name, occurrence.description, occurrence.starts_at,
         alliance.name, occurrence.series_id, occurrence.participation,
         status != "scheduled" or occurrence.participation == "none", status,
+        occurrence.audience,
         tuple(counts.get(key, 0) for key in ("going", "maybe", "not_going")),
     )
 

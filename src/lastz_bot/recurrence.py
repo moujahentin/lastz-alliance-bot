@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lastz_bot.database.models import Alliance, Event, EventReminder, EventSeries, WeeklySchedule
 from lastz_bot.event_management import EventManagementError, validate_participation
 from lastz_bot.event_time import parse_apocalypse_time, utc_now_naive, utc_to_apocalypse_time
+from lastz_bot.audiences import parse_audience
 from lastz_bot.permissions import get_management_rank
 
 
@@ -40,6 +41,7 @@ def _insert_slot(session: Session, series: EventSeries, schedule: WeeklySchedule
         nominal_at=slot, starts_at=slot_utc(slot), name=schedule.name,
         description=schedule.description, status="scheduled", is_exception=False,
         participation=schedule.participation, participation_overridden=False,
+        audience=schedule.audience, audience_overridden=False,
         created_by_discord_user_id=series.created_by_discord_user_id, created_at=now,
     ).on_conflict_do_nothing(index_elements=["schedule_id", "nominal_at"]))
 
@@ -94,17 +96,18 @@ def ensure_occurrences(sessions: sessionmaker, now: datetime | None = None, *,
 
 def create_weekly(session: Session, alliance: Alliance, name: str, description: str | None,
                   first_start_utc: datetime, actor_id: int, now: datetime,
-                  participation: str = "none") -> EventSeries:
+                  participation: str = "none", audience: str = "Everyone") -> EventSeries:
     """Called inside the create command's write transaction."""
     validate_participation(participation)
+    audience_mask = parse_audience(audience)
     anchor = utc_to_apocalypse_time(first_start_utc).replace(tzinfo=None)
     series = EventSeries(alliance_id=alliance.id, name=name, description=description,
                          active=True, created_by_discord_user_id=actor_id, created_at=now,
-                         participation=participation)
+                         participation=participation, audience=audience_mask)
     session.add(series)
     session.flush()
     schedule = WeeklySchedule(series_id=series.id, anchor_at=anchor, next_slot_at=anchor,
-                              name=name, description=description, participation=participation)
+                              name=name, description=description, participation=participation, audience=audience_mask)
     session.add(schedule)
     session.flush()
     _fill_schedule(session, series, schedule, now, BACKFILL_BATCH_SIZE)
@@ -135,10 +138,12 @@ def _cancel_future(session: Session, series_id: int, now: datetime) -> None:
 def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id: int,
                 administrator: bool, *, name: str | None = None, description: str | None = None,
                 weekday: int | None = None, time_at: str | None = None,
-                now: datetime | None = None, participation: str | None = None) -> None:
+                now: datetime | None = None, participation: str | None = None,
+                audience: str | None = None) -> None:
+    audience_mask = parse_audience(audience) if audience is not None else None
     if participation is not None:
         validate_participation(participation)
-    if all(v is None for v in (name, description, weekday, time_at, participation)):
+    if all(v is None for v in (name, description, weekday, time_at, participation, audience)):
         raise EventManagementError("❌ Provide at least one field to edit.")
     if name is not None and not name.strip():
         raise EventManagementError("❌ Event name cannot be empty.")
@@ -166,13 +171,15 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
         target_name = name.strip() if name is not None else series.name
         target_description = (description.strip() or None) if description is not None else series.description
         target_participation = participation if participation is not None else series.participation
-        if not schedule_changed and (target_name, target_description, target_participation) == (
-            series.name, series.description, series.participation,
+        target_audience = audience_mask if audience_mask is not None else series.audience
+        if not schedule_changed and (target_name, target_description, target_participation, target_audience) == (
+            series.name, series.description, series.participation, series.audience,
         ):
             return
         old.ends_at = now  # Preserve old snapshots/cursor until backfill finishes.
         series.name, series.description = target_name, target_description
         series.participation = target_participation
+        series.audience = target_audience
         session.flush()
         if schedule_changed:
             today_at = utc_to_apocalypse_time(now).replace(tzinfo=None)
@@ -183,7 +190,7 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
         else:
             anchor = next_weekly_slot(old.anchor_at, now)
         new = WeeklySchedule(series_id=series.id, anchor_at=anchor, next_slot_at=anchor,
-                             name=target_name, description=target_description, participation=target_participation)
+                             name=target_name, description=target_description, participation=target_participation, audience=target_audience)
         session.add(new)
         session.flush()
         if not schedule_changed:
@@ -205,6 +212,10 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
                 Event.series_id == series.id, Event.starts_at > now,
                 Event.status == "scheduled", Event.participation_overridden.is_(False),
             ).values(participation=target_participation))
+            session.execute(update(Event).where(
+                Event.series_id == series.id, Event.starts_at > now,
+                Event.status == "scheduled", Event.audience_overridden.is_(False),
+            ).values(audience=target_audience))
         _fill_schedule(session, series, new, now, 0)
         session.commit()
 

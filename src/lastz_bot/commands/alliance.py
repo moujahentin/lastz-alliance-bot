@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from lastz_bot.database.models import Alliance, Guild
 from lastz_bot.database.session import SessionLocal
@@ -178,7 +178,17 @@ def setup_alliance_commands(
             )
             return
         with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            # Recheck active membership after obtaining the same lock used by
+            # member lifecycle/rank changes; preflight is not authorization.
+            if not interaction.user.guild_permissions.administrator and get_management_rank(
+                interaction.guild.id, alliance_name, interaction.user.id, session=session,
+            ) is None:
+                session.rollback()
+                await interaction.response.send_message("❌ You no longer have alliance management access.", ephemeral=True)
+                return
             if session.get(Guild, interaction.guild.id) is None:
+                session.rollback()
                 await interaction.response.send_message(
                     "❌ This Discord server has not been initialized yet. Run `/setup` first.",
                     ephemeral=True,
@@ -189,6 +199,7 @@ def setup_alliance_commands(
                 Alliance.name == alliance_name,
             ))
             if record is None:
+                session.rollback()
                 await interaction.response.send_message(
                     f"❌ Alliance `{alliance_name}` does not exist.", ephemeral=True,
                 )

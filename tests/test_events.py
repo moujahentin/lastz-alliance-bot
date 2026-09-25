@@ -58,10 +58,10 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
             session.add_all([
                 Member(alliance_id=1, game_name="Officer", rank="R4", discord_user_id=10),
                 Member(alliance_id=1, game_name="Leader", rank="R5", discord_user_id=20),
-                Member(alliance_id=1, game_name="Member", rank="MEMBER", discord_user_id=30),
+                Member(alliance_id=1, game_name="Member", rank="R1", discord_user_id=30),
                 Member(alliance_id=2, game_name="Other officer", rank="R5", discord_user_id=40),
                 Member(alliance_id=3, game_name="Foreign officer", rank="R5", discord_user_id=50),
-                Member(alliance_id=1, game_name="Local member", rank="MEMBER", discord_user_id=50),
+                Member(alliance_id=1, game_name="Local member", rank="R1", discord_user_id=50),
             ])
             session.commit()
 

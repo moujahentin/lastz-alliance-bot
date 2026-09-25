@@ -188,7 +188,7 @@ Officers can change the mode with `/event edit event_id:<id> participation:<mode
 for one-time events or `/event edit-series series_id:<id> participation:<mode>`.
 These use the existing alliance R4/R5 and server administrator permissions.
 
-Linked alliance members of any rank can use
+Active linked alliance members whose current rank is in the event audience can use
 `/event rsvp event_id:<occurrence-id> response:going|not_going|maybe`. The ID must
 identify a concrete occurrence in their alliance and current Discord server.
 Being a server administrator alone does not grant membership for submitting an
@@ -231,6 +231,85 @@ short SQLite write-lock pattern as event management, serializing membership,
 participation and time checks with edits/stops/deletes, without Discord I/O
 inside the transaction. Apply `alembic upgrade head` before starting the new bot.
 Downgrade refuses to discard stored RSVPs or non-default participation settings.
+
+### Membership ranks, lifecycle, and event audiences
+
+Each alliance membership has exactly one stored rank, R1 through R5, and an
+active flag. Rank is not a Discord role or a global user property. One Discord
+user can have different ranks in different alliances. New members default to R1.
+
+Use `/member rank alliance:WaWF member:@User rank:R3`, `/member deactivate`,
+`/member activate`, and `/member list alliance:WaWF`. Rank/lifecycle commands
+also accept `game_name` instead of member selection for unlinked players or
+members no longer available in Discord's selector. Supply exactly one selector.
+`/member add` and `/member link` retain their game-name workflow and use Discord
+member selection. `/member remove` is now a compatibility alias for deactivation;
+it never erases the membership. List includes rank and active/inactive state,
+retaining the existing server-local ephemeral roster visibility.
+
+Active R4 can manage R1–R4, including peers; active R5 can manage every rank.
+Both the target's current rank and requested rank are checked. R1–R3 cannot
+manage. Inactive officers lose management access. Server administrators retain
+the existing override in their current server and can restore access. Self-
+demotion and self-deactivation are allowed by those same rules. There is no
+last-R5 protection; server administrators are the recovery path. R4 demoted to
+R3 loses management immediately; R3 promoted to active R4 gains it immediately.
+An inactive R5 retains rank/history but no membership-based authority.
+
+Deactivate/reactivate preserves the membership ID, Discord link, and historical
+RSVP intentions. Deactivated members cannot submit/change RSVPs or belong to the
+current eligible audience. Their old responses remain visible to authorized
+managers; they are not future non-responders. Re-enabling membership does not
+reconfirm old responses. No attendance or participation-reminder behavior is
+inferred or added.
+
+`membership_changes` records before/after rank, active state, and Discord link,
+the membership, acting Discord user, and UTC-naive change time. Creation and link
+changes are also recorded. No-op commands create no change row. Historical links
+help identify intentions stored under an earlier Discord link; changing a link
+does not transfer or rewrite RSVP records. These are durable application data,
+not logs. Migration baselines have source `migration` and no human actor; they
+record what was known at migration, not invented earlier rank/lifecycle history.
+
+`/event create`, `/event edit`, and `/event edit-series` accept `audience:Everyone`
+or exact comma-separated ranks such as `R1,R2,R4` (`+` separators also work).
+Omit it on edit to preserve the current audience. Empty or unknown rank sets are
+rejected. Everyone means all active memberships in that alliance. Audience and
+participation are independent: optional permits eligible responses; required
+expresses that eligible members are expected to respond, without adding counts,
+deadlines, DMs, penalties, or enforcement. Cards display audience; upcoming lists
+label restricted audiences. A visible card does not grant RSVP permission.
+
+The database stores each exact rank set as a checked five-bit mask (R1 bit 0
+through R5 bit 4); 31 represents Everyone. Existing events, series, and schedule
+versions migrate to 31. The RSVP service checks current active membership and
+current rank in the same `BEGIN IMMEDIATE` transaction as the response write.
+Membership changes use the same serialization strategy. A membership change
+committed before an RSVP obtains its lock must be observed; an RSVP committed
+first remains historical intention after the later change. This applies to both
+slash commands and persistent buttons, without any administrator RSVP bypass.
+
+One-time audience edits retain before/after configuration, actor, and change time
+in `event_audience_changes`. Effective audience changes to already-started or
+cancelled one-time occurrences are rejected so history is not reinterpreted.
+Weekly audiences follow immutable schedule versions: changing audience closes
+an old version and creates a new one; bounded historical backfill keeps the old
+version's audience. Existing future scheduled occurrences inherit the new set
+unless their independent reserved `audience_overridden` flag is set. Metadata-
+only changes retain occurrence IDs, reminder claims, exceptions, and RSVPs;
+weekly time changes retain cancelled old occurrences with their original audience.
+No occurrence-only override UI is added. Changing rank, state, audience, or
+participation never deletes an RSVP. A retained response is not reconfirmation.
+
+Migration `f14c38b925d0` follows PR #7's `e93b20a714c8`. Every legacy MEMBER maps
+to R1 without inference; R4/R5 remain unchanged and all existing memberships
+start active. Existing events, weekly history/cursors, reminders, RSVP records,
+and publication bindings are preserved. Stop old bot processes, back up the
+database, apply `alembic upgrade head`, then start this version. Downgrade is
+allowed only before new membership/audience changes; it refuses to discard
+new ranks, inactive state, audit actions, or restricted audience configuration.
+Persistent routing, card reconciliation, tombstones, and reservation identity
+remain unchanged; cards converge to new audiences from database snapshots.
 
 ### Persistent event cards
 
