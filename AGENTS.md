@@ -25,7 +25,7 @@ At the current `main` branch checkpoint, the project has:
 - Multi-guild / multi-alliance data model.
 - `/alliance create` and `/alliance list`.
 - Member management commands under `/member` including add/list/remove/link/rank.
-- Member ranks: `MEMBER`, `R4`, `R5`.
+- Membership-scoped ranks `R1`–`R5`, active/inactive lifecycle, and durable change history.
 - Rank-aware management permissions.
 - SQLAlchemy models with SQLite as the initial database.
 - Alembic migrations.
@@ -47,15 +47,18 @@ When adding a feature, add tests for cross-tenant isolation when applicable.
 
 Current rank ordering:
 
-- `MEMBER` = 1
-- `R4` = 2
-- `R5` = 3
+- `R1` = 1, `R2` = 2, `R3` = 3
+- `R4` = 4
+- `R5` = 5
 
 Current management semantics in `permissions.py`:
 
-- `MEMBER` cannot manage ranks.
-- `R4` can manage `MEMBER` and `R4`, but not `R5`.
-- `R5` can manage all supported ranks.
+- `R1`–`R3` cannot manage ranks.
+- Active `R4` can manage `R1`–`R4`, but not `R5`.
+- Active `R5` can manage all supported ranks.
+- Inactive memberships cannot manage or RSVP. Server administrators retain existing overrides.
+- Self-demotion/deactivation is allowed under target-rank rules; there is no last-R5 guard.
+- Member changes and audit rows commit together through `memberships.py`; never hard-delete a leaving member.
 - Discord server administrators may have explicit command-level overrides where existing commands already define them.
 
 Reuse centralized permission helpers instead of duplicating permission logic in commands. New privileged commands should follow existing patterns unless a product decision explicitly changes them.

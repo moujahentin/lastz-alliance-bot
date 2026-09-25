@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from lastz_bot.database.models import Alliance, Event, EventPublication, EventRSVP, EventSeries
 from lastz_bot.event_management import EventManagementError, _managed_event
 from lastz_bot.event_time import utc_now_naive
+from lastz_bot.audiences import includes_rank
 from lastz_bot.permissions import get_member_rank
 
 
@@ -30,10 +31,13 @@ def set_rsvp(sessions: sessionmaker, guild_id: int, event_id: int,
         row = session.execute(select(Event, Alliance).join(Alliance, Event.alliance_id == Alliance.id).where(
             Event.id == event_id, Alliance.guild_id == guild_id,
         )).first()
-        if row is None or get_member_rank(guild_id, row[1].name, actor_id, session=session) is None:
+        rank = get_member_rank(guild_id, row[1].name, actor_id, session=session) if row is not None else None
+        if rank is None:
             # Administrators have no membership bypass for submitting intentions.
             raise EventManagementError("❌ Event not found in this server, or you are not a linked member of its alliance.")
         occurrence, _ = row
+        if not includes_rank(occurrence.audience, rank):
+            raise EventManagementError("❌ Your current alliance rank is outside this event audience.")
         now = utc_now_naive()
         series = session.get(EventSeries, occurrence.series_id) if occurrence.series_id is not None else None
         if occurrence.status != "scheduled" or occurrence.starts_at <= now or (series is not None and not series.active):

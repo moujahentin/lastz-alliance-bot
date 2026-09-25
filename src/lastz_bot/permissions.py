@@ -10,9 +10,11 @@ from lastz_bot.database.session import SessionLocal
 
 
 RANK_LEVELS = {
-    "MEMBER": 1,
-    "R4": 2,
-    "R5": 3,
+    "R1": 1,
+    "R2": 2,
+    "R3": 3,
+    "R4": 4,
+    "R5": 5,
 }
 
 
@@ -62,7 +64,7 @@ def get_member_rank(
             )
         )
 
-        if member is None:
+        if member is None or not member.active:
             return None
 
         return member.rank

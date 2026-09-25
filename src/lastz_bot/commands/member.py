@@ -1,600 +1,91 @@
+from typing import Literal
+
 import discord
 from discord import app_commands
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
-from lastz_bot.database.models import Alliance, Guild, Member
 from lastz_bot.database.session import SessionLocal
-from lastz_bot.permissions import (
-    can_manage_target,
-    get_existing_discord_link,
-    get_management_rank,
-)
+from lastz_bot.event_management import EventManagementError
+from lastz_bot.memberships import add_member, change_member, list_members
+
+Rank = Literal["R1", "R2", "R3", "R4", "R5"]
 
 
-def setup_member_commands(
-    tree: app_commands.CommandTree,
-) -> None:
-    member_group = app_commands.Group(
-        name="member",
-        description="Manage alliance members.",
-    )
+def setup_member_commands(tree: app_commands.CommandTree) -> None:
+    group = app_commands.Group(name="member", description="Manage alliance members.")
 
-    @member_group.command(
-        name="add",
-        description="Add a player to an alliance.",
-    )
-    async def add(
-        interaction: discord.Interaction,
-        alliance: str,
-        game_name: str,
-        rank: str = "MEMBER",
-        discord_user: discord.User | None = None,
-    ) -> None:
+    def context(interaction):
         if interaction.guild is None:
-            await interaction.response.send_message(
-                "❌ This command can only be used inside a Discord server.",
-                ephemeral=True,
-            )
+            raise EventManagementError("❌ This command can only be used inside a Discord server.")
+        return interaction.guild.id, interaction.user.id, interaction.user.guild_permissions.administrator
+
+    async def change(interaction, alliance, member=None, game_name=None, **values):
+        try:
+            guild, actor, admin = context(interaction)
+            changed = change_member(SessionLocal, guild, alliance, actor, admin,
+                                    discord_user_id=member.id if member is not None else None,
+                                    game_name=game_name, **values)
+            message = "✅ Membership updated." if changed else "ℹ️ Membership already has those settings; no change made."
+        except EventManagementError as error:
+            message = str(error)
+        await interaction.response.send_message(message, ephemeral=True)
+
+    @group.command(name="add", description="Add a player to an alliance.")
+    async def add(interaction: discord.Interaction, alliance: str, game_name: str,
+                  rank: Rank = "R1", discord_user: discord.Member | None = None):
+        try:
+            guild, actor, admin = context(interaction)
+            add_member(SessionLocal, guild, alliance, actor, admin, game_name=game_name,
+                       rank=rank, discord_user_id=discord_user.id if discord_user else None)
+            message = f"✅ Member `{game_name}` added to alliance `{alliance}` as {rank}."
+        except EventManagementError as error:
+            message = str(error)
+        await interaction.response.send_message(message, ephemeral=True)
+
+    @group.command(name="rank", description="Change an alliance member's rank.")
+    async def rank(interaction: discord.Interaction, alliance: str, rank: Rank,
+                   member: discord.Member | None = None, game_name: str | None = None):
+        await change(interaction, alliance, member, game_name, rank=rank)
+
+    @group.command(name="deactivate", description="Deactivate membership, preserving history and RSVPs.")
+    async def deactivate(interaction: discord.Interaction, alliance: str,
+                         member: discord.Member | None = None, game_name: str | None = None):
+        await change(interaction, alliance, member, game_name, active=False)
+
+    @group.command(name="activate", description="Reactivate the same historical membership.")
+    async def activate(interaction: discord.Interaction, alliance: str,
+                       member: discord.Member | None = None, game_name: str | None = None):
+        await change(interaction, alliance, member, game_name, active=True)
+
+    @group.command(name="remove", description="Deactivate a player; retain their membership history.")
+    async def remove(interaction: discord.Interaction, alliance: str, game_name: str):
+        # Compatibility entry point: leaving never deletes historical membership.
+        await change(interaction, alliance, game_name=game_name, active=False)
+
+    @group.command(name="link", description="Link an existing membership to a Discord member.")
+    async def link(interaction: discord.Interaction, alliance: str, game_name: str, discord_user: discord.Member):
+        await change(interaction, alliance, game_name=game_name, link_to=discord_user.id)
+
+    @group.command(name="list", description="List alliance members, ranks, and active states.")
+    async def roster(interaction: discord.Interaction, alliance: str):
+        try:
+            guild, _, _ = context(interaction)
+            members = list_members(SessionLocal, guild, alliance)
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
             return
-
-        alliance_name = alliance.strip()
-        player_name = game_name.strip()
-        member_rank = rank.strip().upper()
-
-        if not alliance_name:
-            await interaction.response.send_message(
-                "❌ Alliance name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if not player_name:
-            await interaction.response.send_message(
-                "❌ Game name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if member_rank not in {"MEMBER", "R4", "R5"}:
-            await interaction.response.send_message(
-                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
-                ephemeral=True,
-            )
-            return
-
-        if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_management_rank(
-                guild_id=interaction.guild.id,
-                alliance_name=alliance_name,
-                discord_user_id=interaction.user.id,
-            )
-
-            if actor_rank is None:
-                await interaction.response.send_message(
-                    "❌ You need to be an R4, R5, or Server Administrator "
-                    "of this alliance to add a member.",
-                    ephemeral=True,
-                )
-                return
-
-            if not can_manage_target(actor_rank, member_rank):
-                await interaction.response.send_message(
-                    f"❌ Your rank `{actor_rank}` cannot create a `{member_rank}` member.",
-                    ephemeral=True,
-                )
-                return
-
-        with SessionLocal() as session:
-            guild = session.get(Guild, interaction.guild.id)
-
-            if guild is None:
-                await interaction.response.send_message(
-                    "❌ This Discord server has not been initialized yet. Run `/setup` first.",
-                    ephemeral=True,
-                )
-                return
-
-            alliance_record = session.scalar(
-                select(Alliance).where(
-                    Alliance.guild_id == interaction.guild.id,
-                    Alliance.name == alliance_name,
-                )
-            )
-
-            if alliance_record is None:
-                await interaction.response.send_message(
-                    f"❌ Alliance `{alliance_name}` does not exist.",
-                    ephemeral=True,
-                )
-                return
-
-            existing_member = session.scalar(
-                select(Member).where(
-                    Member.alliance_id == alliance_record.id,
-                    Member.game_name == player_name,
-                )
-            )
-
-            if existing_member is not None:
-                await interaction.response.send_message(
-                    f"ℹ️ Member `{player_name}` already exists in alliance `{alliance_name}`.",
-                    ephemeral=True,
-                )
-                return
-
-            if discord_user is not None:
-                existing_link = get_existing_discord_link(
-                    alliance_id=alliance_record.id,
-                    discord_user_id=discord_user.id,
-                )
-
-                if existing_link is not None:
-                    await interaction.response.send_message(
-                        f"❌ {discord_user.mention} is already linked to "
-                        f"`{existing_link.game_name}` in alliance `{alliance_name}`.",
-                        ephemeral=True,
-                    )
-                    return
-
-            member = Member(
-                alliance_id=alliance_record.id,
-                game_name=player_name,
-                rank=member_rank,
-                discord_user_id=discord_user.id if discord_user else None,
-            )
-
-            session.add(member)
-
-            try:
-                session.commit()
-            except IntegrityError:
-                session.rollback()
-                await interaction.response.send_message(
-                    "❌ The member could not be added because the game name "
-                    "or Discord account already exists in this alliance.",
-                    ephemeral=True,
-                )
-                return
-
-        discord_text = (
-            f" and linked to {discord_user.mention}"
-            if discord_user
-            else ""
-        )
-
-        await interaction.response.send_message(
-            f"✅ Member `{player_name}` has been added to alliance `{alliance_name}`{discord_text}.",
-            ephemeral=True,
-        )
-
-    @member_group.command(
-        name="list",
-        description="List the members of an alliance.",
-    )
-    async def list_members(
-        interaction: discord.Interaction,
-        alliance: str,
-    ) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "❌ This command can only be used inside a Discord server.",
-                ephemeral=True,
-            )
-            return
-
-        alliance_name = alliance.strip()
-
-        if not alliance_name:
-            await interaction.response.send_message(
-                "❌ Alliance name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        with SessionLocal() as session:
-            guild = session.get(Guild, interaction.guild.id)
-
-            if guild is None:
-                await interaction.response.send_message(
-                    "❌ This Discord server has not been initialized yet. Run `/setup` first.",
-                    ephemeral=True,
-                )
-                return
-
-            alliance_record = session.scalar(
-                select(Alliance).where(
-                    Alliance.guild_id == interaction.guild.id,
-                    Alliance.name == alliance_name,
-                )
-            )
-
-            if alliance_record is None:
-                await interaction.response.send_message(
-                    f"❌ Alliance `{alliance_name}` does not exist.",
-                    ephemeral=True,
-                )
-                return
-
-            members = session.scalars(
-                select(Member)
-                .where(Member.alliance_id == alliance_record.id)
-                .order_by(Member.game_name)
-            ).all()
-
+        lines = [f"**Members of {discord.utils.escape_markdown(alliance)}:**"]
+        for row in members:
+            user = f" — <@{row.discord_user_id}>" if row.discord_user_id is not None else " — unlinked"
+            lines.append(f"• {discord.utils.escape_markdown(row.game_name)} — {row.rank} — {'active' if row.active else 'inactive'}{user}")
         if not members:
-            await interaction.response.send_message(
-                f"ℹ️ Alliance `{alliance_name}` has no members yet.",
-                ephemeral=True,
-            )
-            return
+            lines.append("No members registered.")
+        pages = [""]
+        for line in lines:
+            if len(pages[-1]) + len(line) + 1 > 1900:
+                pages.append("")
+            pages[-1] += ("\n" if pages[-1] else "") + line
+        await interaction.response.send_message(pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        for page in pages[1:]:
+            await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
-        member_lines = []
-
-        for member in members:
-            if member.discord_user_id is not None:
-                member_lines.append(
-                    f"• `{member.game_name}` — `{member.rank}` — <@{member.discord_user_id}>"
-                )
-            else:
-                member_lines.append(
-                    f"• `{member.game_name}` — `{member.rank}`"
-                )
-
-        await interaction.response.send_message(
-            f"**Members of `{alliance_name}`:**\n"
-            + "\n".join(member_lines),
-            ephemeral=True,
-        )
-
-    @member_group.command(
-        name="remove",
-        description="Remove a player from an alliance.",
-    )
-    async def remove(
-        interaction: discord.Interaction,
-        alliance: str,
-        game_name: str,
-    ) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "❌ This command can only be used inside a Discord server.",
-                ephemeral=True,
-            )
-            return
-
-        alliance_name = alliance.strip()
-        player_name = game_name.strip()
-
-        if not alliance_name:
-            await interaction.response.send_message(
-                "❌ Alliance name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if not player_name:
-            await interaction.response.send_message(
-                "❌ Game name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        actor_rank = None
-
-        if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_management_rank(
-                guild_id=interaction.guild.id,
-                alliance_name=alliance_name,
-                discord_user_id=interaction.user.id,
-            )
-
-            if actor_rank is None:
-                await interaction.response.send_message(
-                    "❌ You need to be an R4, R5, or Server Administrator "
-                    "of this alliance to remove a member.",
-                    ephemeral=True,
-                )
-                return
-
-        with SessionLocal() as session:
-            guild = session.get(Guild, interaction.guild.id)
-
-            if guild is None:
-                await interaction.response.send_message(
-                    "❌ This Discord server has not been initialized yet. Run `/setup` first.",
-                    ephemeral=True,
-                )
-                return
-
-            alliance_record = session.scalar(
-                select(Alliance).where(
-                    Alliance.guild_id == interaction.guild.id,
-                    Alliance.name == alliance_name,
-                )
-            )
-
-            if alliance_record is None:
-                await interaction.response.send_message(
-                    f"❌ Alliance `{alliance_name}` does not exist.",
-                    ephemeral=True,
-                )
-                return
-
-            member = session.scalar(
-                select(Member).where(
-                    Member.alliance_id == alliance_record.id,
-                    Member.game_name == player_name,
-                )
-            )
-
-            if member is None:
-                await interaction.response.send_message(
-                    f"ℹ️ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
-                    ephemeral=True,
-                )
-                return
-
-            if (
-                not interaction.user.guild_permissions.administrator
-                and actor_rank is not None
-                and not can_manage_target(actor_rank, member.rank)
-            ):
-                await interaction.response.send_message(
-                    f"❌ Your rank `{actor_rank}` cannot remove a `{member.rank}` member.",
-                    ephemeral=True,
-                )
-                return
-
-            session.delete(member)
-            session.commit()
-
-        await interaction.response.send_message(
-            f"✅ Member `{player_name}` has been removed from alliance `{alliance_name}`.",
-            ephemeral=True,
-        )
-
-    @member_group.command(
-        name="link",
-        description="Link an existing alliance member to a Discord user.",
-    )
-    async def link(
-        interaction: discord.Interaction,
-        alliance: str,
-        game_name: str,
-        discord_user: discord.User,
-    ) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "❌ This command can only be used inside a Discord server.",
-                ephemeral=True,
-            )
-            return
-
-        alliance_name = alliance.strip()
-        player_name = game_name.strip()
-
-        if not alliance_name:
-            await interaction.response.send_message(
-                "❌ Alliance name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if not player_name:
-            await interaction.response.send_message(
-                "❌ Game name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        actor_rank = None
-
-        if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_management_rank(
-                guild_id=interaction.guild.id,
-                alliance_name=alliance_name,
-                discord_user_id=interaction.user.id,
-            )
-
-            if actor_rank is None:
-                await interaction.response.send_message(
-                    "❌ You need to be an R4, R5, or Server Administrator "
-                    "of this alliance to link a member.",
-                    ephemeral=True,
-                )
-                return
-
-        with SessionLocal() as session:
-            alliance_record = session.scalar(
-                select(Alliance).where(
-                    Alliance.guild_id == interaction.guild.id,
-                    Alliance.name == alliance_name,
-                )
-            )
-
-            if alliance_record is None:
-                await interaction.response.send_message(
-                    f"❌ Alliance `{alliance_name}` does not exist.",
-                    ephemeral=True,
-                )
-                return
-
-            member = session.scalar(
-                select(Member).where(
-                    Member.alliance_id == alliance_record.id,
-                    Member.game_name == player_name,
-                )
-            )
-
-            if member is None:
-                await interaction.response.send_message(
-                    f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
-                    ephemeral=True,
-                )
-                return
-
-            if (
-                not interaction.user.guild_permissions.administrator
-                and actor_rank is not None
-                and not can_manage_target(actor_rank, member.rank)
-            ):
-                await interaction.response.send_message(
-                    f"❌ Your rank `{actor_rank}` cannot link a `{member.rank}` member.",
-                    ephemeral=True,
-                )
-                return
-
-            existing_link = get_existing_discord_link(
-                alliance_id=alliance_record.id,
-                discord_user_id=discord_user.id,
-                exclude_member_id=member.id,
-            )
-
-            if existing_link is not None:
-                await interaction.response.send_message(
-                    f"❌ {discord_user.mention} is already linked to "
-                    f"`{existing_link.game_name}` in alliance `{alliance_name}`.",
-                    ephemeral=True,
-                )
-                return
-
-            member.discord_user_id = discord_user.id
-
-            try:
-                session.commit()
-            except IntegrityError:
-                session.rollback()
-                await interaction.response.send_message(
-                    f"❌ {discord_user.mention} could not be linked because "
-                    "that Discord account is already linked in this alliance.",
-                    ephemeral=True,
-                )
-                return
-
-        await interaction.response.send_message(
-            f"✅ Member `{player_name}` in alliance `{alliance_name}` "
-            f"has been linked to {discord_user.mention}.",
-            ephemeral=True,
-        )
-
-    @member_group.command(
-        name="rank",
-        description="Change the rank of an existing alliance member.",
-    )
-    async def rank(
-        interaction: discord.Interaction,
-        alliance: str,
-        game_name: str,
-        rank: str,
-    ) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "❌ This command can only be used inside a Discord server.",
-                ephemeral=True,
-            )
-            return
-
-        alliance_name = alliance.strip()
-        player_name = game_name.strip()
-        member_rank = rank.strip().upper()
-
-        if not alliance_name:
-            await interaction.response.send_message(
-                "❌ Alliance name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if not player_name:
-            await interaction.response.send_message(
-                "❌ Game name cannot be empty.",
-                ephemeral=True,
-            )
-            return
-
-        if member_rank not in {"MEMBER", "R4", "R5"}:
-            await interaction.response.send_message(
-                "❌ Rank must be one of: `MEMBER`, `R4`, `R5`.",
-                ephemeral=True,
-            )
-            return
-
-        actor_rank = None
-
-        if not interaction.user.guild_permissions.administrator:
-            actor_rank = get_management_rank(
-                guild_id=interaction.guild.id,
-                alliance_name=alliance_name,
-                discord_user_id=interaction.user.id,
-            )
-
-            if actor_rank is None:
-                await interaction.response.send_message(
-                    "❌ You need to be an R4, R5, or Server Administrator "
-                    "of this alliance to change a member rank.",
-                    ephemeral=True,
-                )
-                return
-
-        with SessionLocal() as session:
-            alliance_record = session.scalar(
-                select(Alliance).where(
-                    Alliance.guild_id == interaction.guild.id,
-                    Alliance.name == alliance_name,
-                )
-            )
-
-            if alliance_record is None:
-                await interaction.response.send_message(
-                    f"❌ Alliance `{alliance_name}` does not exist.",
-                    ephemeral=True,
-                )
-                return
-
-            member = session.scalar(
-                select(Member).where(
-                    Member.alliance_id == alliance_record.id,
-                    Member.game_name == player_name,
-                )
-            )
-
-            if member is None:
-                await interaction.response.send_message(
-                    f"❌ Member `{player_name}` does not exist in alliance `{alliance_name}`.",
-                    ephemeral=True,
-                )
-                return
-
-            if (
-                not interaction.user.guild_permissions.administrator
-                and actor_rank is not None
-                and not can_manage_target(actor_rank, member.rank)
-            ):
-                await interaction.response.send_message(
-                    f"❌ Your rank `{actor_rank}` cannot change a `{member.rank}` member.",
-                    ephemeral=True,
-                )
-                return
-
-            if (
-                not interaction.user.guild_permissions.administrator
-                and actor_rank is not None
-                and not can_manage_target(actor_rank, member_rank)
-            ):
-                await interaction.response.send_message(
-                    f"❌ Your rank `{actor_rank}` cannot assign rank `{member_rank}`.",
-                    ephemeral=True,
-                )
-                return
-
-            member.rank = member_rank
-            session.commit()
-
-        await interaction.response.send_message(
-            f"✅ Member `{player_name}` in alliance `{alliance_name}` "
-            f"now has rank `{member_rank}`.",
-            ephemeral=True,
-        )
-
-    tree.add_command(member_group)
+    tree.add_command(group)

@@ -11,25 +11,25 @@ class PermissionMatrixTests(unittest.TestCase):
     def test_r5_can_manage_all_supported_ranks(self) -> None:
         self.assertTrue(can_manage_target("R5", "R5"))
         self.assertTrue(can_manage_target("R5", "R4"))
-        self.assertTrue(can_manage_target("R5", "MEMBER"))
+        self.assertTrue(can_manage_target("R5", "R1"))
 
     def test_r4_can_manage_r4_and_member_but_not_r5(self) -> None:
         self.assertFalse(can_manage_target("R4", "R5"))
         self.assertTrue(can_manage_target("R4", "R4"))
-        self.assertTrue(can_manage_target("R4", "MEMBER"))
+        self.assertTrue(can_manage_target("R4", "R1"))
 
     def test_member_cannot_manage_any_rank(self) -> None:
-        self.assertFalse(can_manage_target("MEMBER", "R5"))
-        self.assertFalse(can_manage_target("MEMBER", "R4"))
-        self.assertFalse(can_manage_target("MEMBER", "MEMBER"))
+        self.assertFalse(can_manage_target("R1", "R5"))
+        self.assertFalse(can_manage_target("R1", "R4"))
+        self.assertFalse(can_manage_target("R1", "R1"))
 
     def test_minimum_r4_access(self) -> None:
         self.assertTrue(has_minimum_rank("R5", "R4"))
         self.assertTrue(has_minimum_rank("R4", "R4"))
-        self.assertFalse(has_minimum_rank("MEMBER", "R4"))
+        self.assertFalse(has_minimum_rank("R1", "R4"))
 
     def test_unknown_actor_rank_has_no_management_access(self) -> None:
-        self.assertFalse(can_manage_target("UNKNOWN", "MEMBER"))
+        self.assertFalse(can_manage_target("UNKNOWN", "R1"))
         self.assertFalse(has_minimum_rank("UNKNOWN", "R4"))
 
 

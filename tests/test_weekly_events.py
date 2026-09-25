@@ -38,8 +38,8 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
                 Alliance(id=3, guild_id=2, name="Alpha", reminder_channel_id=201),
             ])
             session.flush()
-            for alliance, actor, rank in [(1, 10, "R4"), (1, 20, "R5"), (1, 30, "MEMBER"),
-                                           (2, 40, "R5"), (3, 50, "R5"), (1, 50, "MEMBER")]:
+            for alliance, actor, rank in [(1, 10, "R4"), (1, 20, "R5"), (1, 30, "R1"),
+                                           (2, 40, "R5"), (3, 50, "R5"), (1, 50, "R1")]:
                 session.add(Member(alliance_id=alliance, game_name=str(actor),
                                    discord_user_id=actor, rank=rank))
             session.commit()

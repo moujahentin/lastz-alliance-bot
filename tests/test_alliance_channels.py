@@ -32,7 +32,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
                 Alliance(id=3, guild_id=2, name="Alpha"),
             ])
             session.flush()
-            for alliance, user, rank in ((1, 10, "R4"), (1, 20, "R5"), (1, 30, "MEMBER"), (2, 40, "R5"), (3, 50, "R5"), (1, 50, "MEMBER")):
+            for alliance, user, rank in ((1, 10, "R4"), (1, 20, "R5"), (1, 30, "R1"), (2, 40, "R5"), (3, 50, "R5"), (1, 50, "R1")):
                 session.add(Member(alliance_id=alliance, game_name=str(user), discord_user_id=user, rank=rank))
             session.commit()
 
@@ -108,3 +108,20 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
                 await self.command(interaction, alliance, self.channel(guild=guild))
                 interaction.response.send_message.assert_awaited_once_with(expected, ephemeral=True)
         self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
+
+
+    async def test_deactivation_between_preflight_and_write_blocks_channel_change(self):
+        channel = self.channel()
+        def deactivate_during_permission_check(bot_member):
+            with self.sessions() as session:
+                member = session.scalar(select(Member).where(Member.alliance_id == 1, Member.discord_user_id == 10))
+                member.active = False
+                session.commit()
+            return SimpleNamespace(view_channel=True, send_messages=True)
+        channel.permissions_for.side_effect = deactivate_during_permission_check
+        interaction = self.interaction()
+        await self.command(interaction, 'Alpha', channel)
+        self.assertIn('no longer', interaction.response.send_message.call_args.args[0])
+        self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
+        await self.command(self.interaction(admin=True), 'Alpha', self.channel())
+        self.assertEqual(self.configuration(), {1: 101, 2: None, 3: None})

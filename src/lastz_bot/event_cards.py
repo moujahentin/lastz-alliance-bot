@@ -16,6 +16,7 @@ from lastz_bot.publications import (
     abandon_publication, authorize_publish, prune_pending_publications,
     read_publication_card, record_publication, reserve_publication, resolve_publication,
 )
+from lastz_bot.audiences import audience_label
 from lastz_bot.rsvp import set_rsvp
 
 
@@ -47,6 +48,7 @@ def card_embed(state):
     embed.add_field(name="Apocalypse Time", value=f"{starts:%Y-%m-%d %H:%M} AT", inline=False)
     embed.add_field(name="Alliance", value=discord.utils.escape_markdown(state.alliance)[:1024])
     embed.add_field(name="Event", value=f"Weekly — Series ID {state.series_id}" if state.series_id else "One-time")
+    embed.add_field(name="Audience", value=audience_label(state.audience), inline=False)
     modes = {"none": "RSVP disabled", "optional": "RSVP optional", "required": "Response required"}
     embed.add_field(name="Participation", value=modes[state.participation], inline=False)
     if state.status != "scheduled":

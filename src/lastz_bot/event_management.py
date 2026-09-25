@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from lastz_bot.database.models import Alliance, Event, EventReminder
+from lastz_bot.database.models import Alliance, Event, EventReminder, EventAudienceChange
 from lastz_bot.event_time import parse_apocalypse_time, utc_now_naive
 from lastz_bot.permissions import get_management_rank
 
@@ -71,8 +71,9 @@ def edit_event(
     starts_at: str | None = None,
     description: str | None = None,
     participation: str | None = None,
+    audience: str | None = None,
 ) -> EditedEvent:
-    if all(value is None for value in (name, starts_at, description, participation)):
+    if all(value is None for value in (name, starts_at, description, participation, audience)):
         raise EventManagementError("❌ Provide at least one field to edit.")
     if name is not None:
         name = name.strip()
@@ -80,6 +81,8 @@ def edit_event(
             raise EventManagementError("❌ Event name cannot be empty.")
     if participation is not None:
         validate_participation(participation)
+    from lastz_bot.audiences import parse_audience
+    new_audience = parse_audience(audience) if audience is not None else None
     new_start = None
     if starts_at is not None:
         try:
@@ -97,6 +100,12 @@ def edit_event(
         rescheduled = new_start is not None and new_start != event.starts_at
         if event.series_id is not None:
             raise EventManagementError("❌ This is a weekly occurrence. Use `/event edit-series` with its series ID.")
+        if new_audience is not None and new_audience != event.audience:
+            if event.starts_at <= utc_now_naive() or event.status != "scheduled":
+                raise EventManagementError("❌ Historical occurrence audiences cannot be changed.")
+            session.add(EventAudienceChange(event_id=event.id, previous_audience=event.audience,
+                new_audience=new_audience, actor_id=actor_id, changed_at=utc_now_naive()))
+            event.audience = new_audience
         if rescheduled:
             validate_one_time_start(new_start, utc_now_naive())
         if name is not None:

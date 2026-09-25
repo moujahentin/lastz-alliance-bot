@@ -38,7 +38,7 @@ class PublicationMigrationTests(unittest.TestCase):
             self.assertEqual(connection.execute(text("PRAGMA foreign_key_check")).all(), [])
         command.current(self.config)
         command.check(self.config)
-        self.assertIn("e93b20a714c8 (head)", self.config.stdout.getvalue())
+        self.assertIn(f"{self.head} (head)", self.config.stdout.getvalue())
         self.assertIn("No new upgrade operations detected", self.config.stdout.getvalue())
 
     def test_multiple_cards_uniqueness_and_foreign_keys(self):
