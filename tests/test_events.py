@@ -31,9 +31,10 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(patcher.stop)
 
         self.now = datetime(2026, 9, 25, 18)
-        clock = patch("lastz_bot.commands.event.utc_now_naive", return_value=self.now)
-        clock.start()
-        self.addCleanup(clock.stop)
+        for target in ("lastz_bot.commands.event.utc_now_naive", "lastz_bot.event_management.utc_now_naive"):
+            clock = patch(target, side_effect=lambda: self.now)
+            clock.start()
+            self.addCleanup(clock.stop)
 
         # Exercise the registered callbacks without connecting to Discord.
         tree = Mock()
@@ -201,6 +202,77 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
                     await command(interaction, alliance, *args)
                     self.assert_response(interaction, expected)
                     self.assertEqual(self.stored_events(), [])
+
+    async def test_past_once_create_rejected_without_any_rows(self):
+        for recurrence in ({}, {"recurrence": "once"}):
+            interaction = self.interaction()
+            await self.create(interaction, "Alpha", "Past", "2026-09-24 17:00", **recurrence)
+            self.assert_response(interaction,
+                "❌ One-time events must start in the future. Choose a later Apocalypse Time.")
+        self.assertEqual(self.stored_events(), [])
+        with self.sessions() as session:
+            for table in ("events", "event_reminders", "event_series", "weekly_schedules"):
+                self.assertEqual(session.scalar(text(f"SELECT COUNT(*) FROM {table}")), 0)
+
+    async def test_create_current_minute_rejected_and_next_minute_allowed(self):
+        for seconds, micros in ((0, 0), (0, 1), (30, 0), (59, 999999)):
+            self.now = datetime(2026, 9, 25, 18, 0, seconds, micros)
+            interaction = self.interaction()
+            await self.create(interaction, "Alpha", "Now", "2026-09-25 16:00")
+            self.assert_response(interaction,
+                "❌ One-time events must start in the future. Choose a later Apocalypse Time.")
+            self.assertEqual(self.stored_events(), [])
+        self.now = datetime(2026, 9, 25, 18, 0, 30)
+        interaction = self.interaction()
+        await self.create(interaction, "Alpha", "Future", "2026-09-25 16:01")
+        self.assert_response(interaction,
+            "✅ Event `Future` created for alliance `Alpha` at `2026-09-25 16:01` Apocalypse Time.")
+        self.assertEqual(self.stored_events()[0].starts_at, datetime(2026, 9, 25, 18, 1))
+
+    async def test_rejected_past_or_current_reschedule_preserves_all_state(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        for start in ("2026-09-24 17:00", "2026-09-25 16:00"):
+            for micros in (0, 1):
+                self.now = datetime(2026, 9, 25, 18, 0, 0, micros)
+                interaction = self.interaction()
+                await self.edit(interaction, event_id, starts_at=start, name="Changed", description="Changed")
+                self.assert_response(interaction,
+                    "❌ One-time events must start in the future. Choose a later Apocalypse Time.")
+                stored, = self.stored_events()
+                self.assertEqual((stored.name, stored.description, stored.starts_at),
+                                 ("Duel", "Prepare", datetime(2026, 9, 25, 19)))
+                self.assertEqual(self.reminder_snapshot(), before)
+
+    async def test_reschedule_next_minute_is_allowed(self):
+        event_id = self.add_managed_event()
+        self.now = datetime(2026, 9, 25, 18, 0, 30)
+        await self.edit(self.interaction(), event_id, starts_at="2026-09-25 16:01")
+        self.assertEqual(self.stored_events()[0].starts_at, datetime(2026, 9, 25, 18, 1))
+        self.assertEqual(self.reminder_snapshot(), [])
+
+    async def test_historical_metadata_and_unchanged_start_still_allowed(self):
+        event_id = self.add_managed_event()
+        before = self.reminder_snapshot()
+        self.now = datetime(2026, 9, 26)
+        for kwargs in ({"name": "Renamed"}, {"description": "New"}, {"starts_at": "2026-09-25 17:00"}):
+            interaction = self.interaction()
+            await self.edit(interaction, event_id, **kwargs)
+            self.assertIn("updated", interaction.response.send_message.call_args.args[0])
+            self.assertEqual(self.reminder_snapshot(), before)
+        self.assertEqual(self.stored_events()[0].starts_at, datetime(2026, 9, 25, 19))
+
+    async def test_past_reschedule_does_not_bypass_access_checks(self):
+        local = self.add_managed_event()
+        foreign = self.add_managed_event(3)
+        before = self.reminder_snapshot()
+        for event_id, actor, admin in ((local, 30, False), (local, 99, False), (local, 40, False),
+                                        (local, 50, False), (foreign, 10, False), (foreign, 99, True)):
+            interaction = self.interaction(user_id=actor, admin=admin)
+            await self.edit(interaction, event_id, starts_at="2026-09-24 17:00")
+            self.assert_response(interaction,
+                "❌ Event not found in this server, or you do not have permission to manage it.")
+        self.assertEqual(self.reminder_snapshot(), before)
 
     def add_managed_event(self, alliance_id=1):
         event_id = self.add_event(alliance_id, "Duel", datetime(2026, 9, 25, 19), "Prepare")

@@ -66,6 +66,12 @@ delivery records, including events created before the migration.
 
 ### Editing and deleting events
 
+One-time creation and actual start-time changes require a start strictly later
+than current UTC, checked inside the write transaction without rounding. AT
+input has minute precision, so the current minute and earlier times are rejected
+with an ephemeral error and no changes. Metadata-only edits and unchanged start
+times remain allowed. Weekly past anchors remain valid for historical backfill.
+
 `/event list alliance:<name>` includes each event's ID. R4/R5 members of the
 event's alliance and Server Administrators can use `/event edit event_id:<id>`
 or `/event delete event_id:<id>` in that alliance's server. Event IDs from other

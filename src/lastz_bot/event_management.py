@@ -7,12 +7,25 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from lastz_bot.database.models import Alliance, Event, EventReminder
-from lastz_bot.event_time import parse_apocalypse_time
+from lastz_bot.event_time import parse_apocalypse_time, utc_now_naive
 from lastz_bot.permissions import get_management_rank
 
 
 class EventManagementError(ValueError):
     """A command-safe validation or access error."""
+
+
+def validate_one_time_start(starts_at: datetime, now: datetime) -> None:
+    """Require a strictly future UTC-naive start, without rounding the clock.
+
+    Minute-precision AT input in the current minute is already due. Call inside
+    the write transaction so time spent waiting for its lock is accounted for.
+    Weekly anchors intentionally bypass this policy to permit backfill.
+    """
+    if starts_at <= now:
+        raise EventManagementError(
+            "❌ One-time events must start in the future. Choose a later Apocalypse Time."
+        )
 
 
 def _managed_event(
@@ -76,6 +89,8 @@ def edit_event(
         rescheduled = new_start is not None and new_start != event.starts_at
         if event.series_id is not None:
             raise EventManagementError("❌ This is a weekly occurrence. Use `/event edit-series` with its series ID.")
+        if rescheduled:
+            validate_one_time_start(new_start, utc_now_naive())
         if name is not None:
             event.name = name
         if description is not None:

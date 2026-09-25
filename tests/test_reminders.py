@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from lastz_bot.database.base import Base
 from lastz_bot.database.models import Alliance, Event, EventReminder, Guild
 from lastz_bot.event_time import parse_apocalypse_time
-from lastz_bot.event_management import delete_event, edit_event
+from lastz_bot.event_management import EventManagementError, delete_event, edit_event
 from lastz_bot.reminders import ReminderProcessor, eligible_threshold
 from lastz_bot.reminder_worker import ReminderWorker
 
@@ -29,6 +29,9 @@ class ReminderTests(unittest.IsolatedAsyncioTestCase):
         Base.metadata.create_all(self.engine)
         self.starts_at = parse_apocalypse_time("2026-09-25 17:00")
         self.now = self.starts_at - timedelta(minutes=30)
+        clock = patch("lastz_bot.event_management.utc_now_naive", side_effect=lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
         self.send = AsyncMock()
         with self.sessions() as session:
             session.add_all([Guild(id=1, name="One"), Guild(id=2, name="Two")])
@@ -291,10 +294,12 @@ class ReminderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.send.call_args.args[0].lead_minutes, 10)
         self.assertEqual(self.send.call_args.args[0].starts_at, datetime(2026, 9, 25, 19, 1))
 
-    async def test_reschedule_to_past_never_sends(self):
-        self.reschedule("2026-09-24 17:00")
+    async def test_rejected_past_reschedule_preserves_original_reminder(self):
+        with self.assertRaises(EventManagementError):
+            self.reschedule("2026-09-24 17:00")
         await self.processor().process_pending()
-        self.send.assert_not_awaited()
+        self.send.assert_awaited_once()
+        self.assertEqual(self.send.call_args.args[0].starts_at, self.starts_at)
 
     def test_old_claim_invalid_after_reschedule_away_and_back_even_with_same_clock(self):
         processor = self.processor()
