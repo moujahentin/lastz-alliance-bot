@@ -122,6 +122,22 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.get(WeeklySchedule, row.schedule_id).anchor_at, row.nominal_at)
         self.assertIn(f"Weekly series `{row.series_id}`", interaction.response.send_message.call_args.args[0])
 
+    async def test_command_past_weekly_anchor_still_backfills_in_batches(self):
+        interaction = self.interaction()
+        first_start = self.start - 121 * WEEK
+        first_at = (first_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
+        await self.commands["create"](interaction, "Alpha", "History", first_at, recurrence="weekly")
+        self.assertIn("Weekly series", interaction.response.send_message.call_args.args[0])
+        self.assertEqual(len(self.rows()), 51)
+        self.assertEqual(self.rows()[0].starts_at, first_start)
+        self.assertEqual(ensure_occurrences(self.sessions, self.now), 50)
+        self.assertEqual(ensure_occurrences(self.sessions, self.now), 21)
+        self.assertEqual(len(self.rows()), 122)
+        self.assertTrue(all(row.status == "scheduled" for row in self.rows()))
+        ids = [row.id for row in self.rows()]
+        ensure_occurrences(self.sessions, self.now)
+        self.assertEqual([row.id for row in self.rows()], ids)
+
     async def test_list_concrete_ids_weekly_badge_order_and_isolation(self):
         first = self.create()
         self.create(2)

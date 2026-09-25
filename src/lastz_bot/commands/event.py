@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 
 from lastz_bot.database.models import Alliance, Event, Guild
 from lastz_bot.database.session import SessionLocal
-from lastz_bot.event_management import EventManagementError, delete_event, edit_event
+from lastz_bot.event_management import EventManagementError, delete_event, edit_event, validate_one_time_start
 from lastz_bot.event_time import (
     parse_apocalypse_time,
     utc_now_naive,
@@ -103,6 +103,7 @@ def setup_event_commands(
                     )
                     series_id = series.id
                 else:
+                    validate_one_time_start(event_starts_at, utc_now_naive())
                     session.add(Event(
                         alliance_id=alliance_record.id, name=event_name, description=event_description,
                         starts_at=event_starts_at, created_by_discord_user_id=interaction.user.id,
