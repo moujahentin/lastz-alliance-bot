@@ -325,3 +325,18 @@ class EventRSVP(Base):
     response: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
+class EventPublication(Base):
+    """One concrete Discord message; null event_id is a deletion cleanup tombstone."""
+
+    __tablename__ = "event_publications"
+    # A late publish completion must never bind to a reused reservation ID.
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Null until Discord send succeeds; the reservation pins occurrence identity.
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("guilds.id", ondelete="CASCADE"), nullable=False)
+    channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)

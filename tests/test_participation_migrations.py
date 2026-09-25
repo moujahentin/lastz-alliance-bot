@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +25,7 @@ class ParticipationMigrationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.config = Config(str(root / "alembic.ini"), stdout=StringIO())
         self.config.set_main_option("script_location", str(root / "migrations"))
+        self.head = ScriptDirectory.from_config(self.config).get_current_head()
         self.engine = create_engine(url)
         self.addCleanup(self.engine.dispose)
 
@@ -80,10 +82,10 @@ class ParticipationMigrationTests(unittest.TestCase):
             self.assertEqual(connection.execute(text("SELECT participation_overridden FROM events")).all(), [(0,)] * 4)
             self.assertEqual(connection.scalar(text("SELECT COUNT(*) FROM event_rsvps")), 0)
             self.assertEqual(connection.execute(text("PRAGMA foreign_key_check")).all(), [])
-            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), "d82a19f603b7")
+            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), self.head)
         command.current(self.config)
         command.check(self.config)
-        self.assertIn("d82a19f603b7 (head)", self.config.stdout.getvalue())
+        self.assertIn(f"{self.head} (head)", self.config.stdout.getvalue())
         self.assertIn("No new upgrade operations detected", self.config.stdout.getvalue())
 
     def test_migrated_database_uniqueness_checks_and_cascade(self):
