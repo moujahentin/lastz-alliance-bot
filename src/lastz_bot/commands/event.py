@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 
 from lastz_bot.database.models import Alliance, Event, Guild
 from lastz_bot.database.session import SessionLocal
-from lastz_bot.event_management import EventManagementError, delete_event, edit_event, validate_one_time_start
+from lastz_bot.event_management import EventManagementError, delete_event, edit_event, validate_one_time_start, validate_participation
 from lastz_bot.event_time import (
     parse_apocalypse_time,
     utc_now_naive,
@@ -15,6 +15,7 @@ from lastz_bot.event_time import (
 from lastz_bot.permissions import get_management_rank
 from lastz_bot.recurrence import create_weekly, edit_series, ensure_occurrences, stop_series
 from lastz_bot.reminders import active_occurrence
+from lastz_bot.rsvp import get_rsvps, set_rsvp, summary_pages
 
 
 def setup_event_commands(
@@ -36,6 +37,7 @@ def setup_event_commands(
         starts_at: str,
         description: str | None = None,
         recurrence: Literal["once", "weekly"] = "once",
+        participation: Literal["none", "optional", "required"] = "none",
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -96,10 +98,11 @@ def setup_event_commands(
                 ))
                 if alliance_record is None:
                     raise EventManagementError(f"❌ Alliance `{alliance_name}` does not exist.")
+                validate_participation(participation)
                 if recurrence == "weekly":
                     series = create_weekly(
                         session, alliance_record, event_name, event_description,
-                        event_starts_at, interaction.user.id, utc_now_naive(),
+                        event_starts_at, interaction.user.id, utc_now_naive(), participation=participation,
                     )
                     series_id = series.id
                 else:
@@ -107,6 +110,7 @@ def setup_event_commands(
                     session.add(Event(
                         alliance_id=alliance_record.id, name=event_name, description=event_description,
                         starts_at=event_starts_at, created_by_discord_user_id=interaction.user.id,
+                        participation=participation,
                     ))
                 session.commit()
         except EventManagementError as error:
@@ -217,6 +221,9 @@ def setup_event_commands(
                 line = line.replace("• ID", "• Occurrence ID", 1)
                 line += f" — 🔁 Weekly (Series ID `{event.series_id}`)"
 
+            if event.participation != "none":
+                line += f" — RSVP: {event.participation}"
+
             event_lines.append(line)
 
         await interaction.response.send_message(
@@ -238,6 +245,7 @@ def setup_event_commands(
         name: str | None = None,
         starts_at: str | None = None,
         description: str | None = None,
+        participation: Literal["none", "optional", "required"] | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -249,7 +257,7 @@ def setup_event_commands(
             result = edit_event(
                 SessionLocal, interaction.guild.id, event_id, interaction.user.id,
                 interaction.user.guild_permissions.administrator,
-                name=name, starts_at=starts_at, description=description,
+                name=name, starts_at=starts_at, description=description, participation=participation,
             )
         except EventManagementError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
@@ -292,6 +300,7 @@ def setup_event_commands(
         description: str | None = None,
         weekday: Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] | None = None,
         time_at: str | None = None,
+        participation: Literal["none", "optional", "required"] | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -302,7 +311,8 @@ def setup_event_commands(
         try:
             edit_series(SessionLocal, interaction.guild.id, series_id, interaction.user.id,
                         interaction.user.guild_permissions.administrator, name=name, description=description,
-                        weekday=days.index(weekday) if weekday is not None else None, time_at=time_at)
+                        weekday=days.index(weekday) if weekday is not None else None, time_at=time_at,
+                        participation=participation)
         except EventManagementError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
             return
@@ -324,5 +334,43 @@ def setup_event_commands(
         await interaction.response.send_message(
             f"✅ Weekly series `{series_id}` stopped. Occurrence history is preserved.", ephemeral=True,
         )
+
+    @event_group.command(name="rsvp", description="Set your RSVP for a concrete event occurrence.")
+    async def rsvp(
+        interaction: discord.Interaction,
+        event_id: app_commands.Range[int, 1],
+        response: Literal["going", "not_going", "maybe"],
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.", ephemeral=True,
+            )
+            return
+        try:
+            set_rsvp(SessionLocal, interaction.guild.id, event_id, interaction.user.id, response)
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"✅ RSVP for occurrence `{event_id}` set to `{response}`.", ephemeral=True,
+        )
+
+    @event_group.command(name="rsvps", description="View an alliance occurrence's RSVP summary.")
+    async def rsvps(interaction: discord.Interaction, event_id: app_commands.Range[int, 1]) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.", ephemeral=True,
+            )
+            return
+        try:
+            result = get_rsvps(SessionLocal, interaction.guild.id, event_id, interaction.user.id,
+                               interaction.user.guild_permissions.administrator)
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        pages = summary_pages(result)
+        await interaction.response.send_message(pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        for page in pages[1:]:
+            await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     tree.add_command(event_group)

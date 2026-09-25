@@ -11,7 +11,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from lastz_bot.database.models import Alliance, Event, EventReminder, EventSeries, WeeklySchedule
-from lastz_bot.event_management import EventManagementError
+from lastz_bot.event_management import EventManagementError, validate_participation
 from lastz_bot.event_time import parse_apocalypse_time, utc_now_naive, utc_to_apocalypse_time
 from lastz_bot.permissions import get_management_rank
 
@@ -39,6 +39,7 @@ def _insert_slot(session: Session, series: EventSeries, schedule: WeeklySchedule
         alliance_id=series.alliance_id, series_id=series.id, schedule_id=schedule.id,
         nominal_at=slot, starts_at=slot_utc(slot), name=schedule.name,
         description=schedule.description, status="scheduled", is_exception=False,
+        participation=schedule.participation, participation_overridden=False,
         created_by_discord_user_id=series.created_by_discord_user_id, created_at=now,
     ).on_conflict_do_nothing(index_elements=["schedule_id", "nominal_at"]))
 
@@ -92,15 +93,18 @@ def ensure_occurrences(sessions: sessionmaker, now: datetime | None = None, *,
 
 
 def create_weekly(session: Session, alliance: Alliance, name: str, description: str | None,
-                  first_start_utc: datetime, actor_id: int, now: datetime) -> EventSeries:
+                  first_start_utc: datetime, actor_id: int, now: datetime,
+                  participation: str = "none") -> EventSeries:
     """Called inside the create command's write transaction."""
+    validate_participation(participation)
     anchor = utc_to_apocalypse_time(first_start_utc).replace(tzinfo=None)
     series = EventSeries(alliance_id=alliance.id, name=name, description=description,
-                         active=True, created_by_discord_user_id=actor_id, created_at=now)
+                         active=True, created_by_discord_user_id=actor_id, created_at=now,
+                         participation=participation)
     session.add(series)
     session.flush()
     schedule = WeeklySchedule(series_id=series.id, anchor_at=anchor, next_slot_at=anchor,
-                              name=name, description=description)
+                              name=name, description=description, participation=participation)
     session.add(schedule)
     session.flush()
     _fill_schedule(session, series, schedule, now, BACKFILL_BATCH_SIZE)
@@ -131,9 +135,10 @@ def _cancel_future(session: Session, series_id: int, now: datetime) -> None:
 def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id: int,
                 administrator: bool, *, name: str | None = None, description: str | None = None,
                 weekday: int | None = None, time_at: str | None = None,
-                now: datetime | None = None) -> None:
-    now = now if now is not None else utc_now_naive()
-    if all(v is None for v in (name, description, weekday, time_at)):
+                now: datetime | None = None, participation: str | None = None) -> None:
+    if participation is not None:
+        validate_participation(participation)
+    if all(v is None for v in (name, description, weekday, time_at, participation)):
         raise EventManagementError("❌ Provide at least one field to edit.")
     if name is not None and not name.strip():
         raise EventManagementError("❌ Event name cannot be empty.")
@@ -147,6 +152,8 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
             raise EventManagementError("❌ Time must use format `HH:MM` in Apocalypse Time.") from error
     with sessions() as session:
         session.execute(text("BEGIN IMMEDIATE"))
+        # Do not change newly historical participation after waiting for a lock.
+        now = now if now is not None else utc_now_naive()
         series = _managed_series(session, guild_id, series_id, actor_id, administrator)
         if not series.active:
             raise EventManagementError("❌ This weekly series has been stopped.")
@@ -158,10 +165,14 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
         schedule_changed = (target_day, target_time) != (old.anchor_at.weekday(), old.anchor_at.time())
         target_name = name.strip() if name is not None else series.name
         target_description = (description.strip() or None) if description is not None else series.description
-        if not schedule_changed and (target_name, target_description) == (series.name, series.description):
+        target_participation = participation if participation is not None else series.participation
+        if not schedule_changed and (target_name, target_description, target_participation) == (
+            series.name, series.description, series.participation,
+        ):
             return
         old.ends_at = now  # Preserve old snapshots/cursor until backfill finishes.
         series.name, series.description = target_name, target_description
+        series.participation = target_participation
         session.flush()
         if schedule_changed:
             today_at = utc_to_apocalypse_time(now).replace(tzinfo=None)
@@ -172,7 +183,7 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
         else:
             anchor = next_weekly_slot(old.anchor_at, now)
         new = WeeklySchedule(series_id=series.id, anchor_at=anchor, next_slot_at=anchor,
-                             name=target_name, description=target_description)
+                             name=target_name, description=target_description, participation=target_participation)
         session.add(new)
         session.flush()
         if not schedule_changed:
@@ -188,6 +199,12 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
                 Event.schedule_id == new.id, Event.is_exception.is_(False),
                 Event.starts_at > now, Event.status == "scheduled",
             ).values(name=target_name, description=target_description))
+            # Existing future occurrences inherit the new mode unless explicitly
+            # overridden. Past/cancelled rows and their RSVPs remain history.
+            session.execute(update(Event).where(
+                Event.series_id == series.id, Event.starts_at > now,
+                Event.status == "scheduled", Event.participation_overridden.is_(False),
+            ).values(participation=target_participation))
         _fill_schedule(session, series, new, now, 0)
         session.commit()
 
