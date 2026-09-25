@@ -5,7 +5,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import sessionmaker
 
-from lastz_bot.database.models import Alliance, Event, EventRSVP, EventSeries
+from lastz_bot.database.models import Alliance, Event, EventPublication, EventRSVP, EventSeries
 from lastz_bot.event_management import EventManagementError, _managed_event
 from lastz_bot.event_time import utc_now_naive
 from lastz_bot.permissions import get_member_rank
@@ -15,12 +15,18 @@ RESPONSES = ("going", "maybe", "not_going")
 
 
 def set_rsvp(sessions: sessionmaker, guild_id: int, event_id: int,
-             actor_id: int, response: str) -> None:
+             actor_id: int, response: str, *, publication_channel_id: int | None = None,
+             publication_message_id: int | None = None) -> None:
     if response not in RESPONSES:
         raise EventManagementError("❌ Response must be going, not_going, or maybe.")
     with sessions() as session:
         # Serialize authorization/window checks with edits, stops and deletion.
         session.execute(text("BEGIN IMMEDIATE"))
+        if publication_message_id is not None or publication_channel_id is not None:
+            publication = session.scalar(select(EventPublication).where(EventPublication.message_id == publication_message_id)) if publication_message_id is not None else None
+            if (publication is None or publication.event_id != event_id or publication.guild_id != guild_id
+                    or publication.channel_id != publication_channel_id):
+                raise EventManagementError("❌ This event card is no longer available.")
         row = session.execute(select(Event, Alliance).join(Alliance, Event.alliance_id == Alliance.id).where(
             Event.id == event_id, Alliance.guild_id == guild_id,
         )).first()

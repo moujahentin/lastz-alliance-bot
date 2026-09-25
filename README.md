@@ -232,6 +232,68 @@ participation and time checks with edits/stops/deletes, without Discord I/O
 inside the transaction. Apply `alembic upgrade head` before starting the new bot.
 Downgrade refuses to discard stored RSVPs or non-default participation settings.
 
+### Persistent event cards
+
+An alliance R4/R5 or server administrator can explicitly publish a concrete
+occurrence with `/event publish event_id:<id> channel:<text-channel>`. The channel
+must be in the same server and grant the bot View Channel, Send Messages, and
+Embed Links. Creation never publishes automatically. Cards show the event text,
+AT start, alliance, occurrence/series identity, participation mode, and database
+RSVP counts. Optional/required events have Going, Maybe, and Not Going buttons;
+`none` displays RSVP disabled with no controls. Required is clearly labelled.
+The existing `/event rsvp` and `/event rsvps` commands remain available.
+
+Each button delegates to the same RSVP service as the slash command. Linked
+membership, tenant ownership, participation and lifecycle checks still apply;
+administrator status alone does not permit RSVP. The service atomically checks
+the stored guild/channel/message/event association before writing. Custom IDs
+contain only a version and response (`lastz:rsvp:v1:going`, `:maybe`, and
+`:not_going`), never authoritative event/user/tenant identifiers.
+
+Startup registers a global discord.py persistent view with `timeout=None` and
+those stable IDs. Old messages therefore route to the new process; every click
+resolves the occurrence from the database. No message needs to be republished
+after restart. The worker waits for Discord readiness and reconciles cards every
+30 seconds. Successful button and slash RSVPs also request an immediate refresh.
+All cards for an occurrence share one RSVP dataset. Refresh sends are serialized
+within the bot process and reread database snapshots; counts are never adjusted
+from message text. Unchanged renders are skipped. Permission/network failures
+retry on later cycles without undoing committed RSVPs. This is eventual visual
+consistency, not a transaction spanning Discord and SQLite.
+
+Mode changes update existing cards on reconciliation: none removes controls,
+and re-enabling restores them when the occurrence is still open. Expiry,
+cancellation and series stops close controls. Correctness never depends on the
+Discord edit succeeding: stale clicks still fail backend checks. A card always
+belongs to its original occurrence; it never rolls forward to another week.
+
+Migration `e93b20a714c8` follows `d82a19f603b7` and adds `event_publications`.
+Each publication has a non-reused SQLite reservation ID, a unique nullable
+Discord message ID, guild/channel association, nullable occurrence FK, and
+UTC-naive creation time. Multiple messages/channels per occurrence are supported.
+Publishing reserves the occurrence and reads its initial display snapshot inside
+one transaction, then sends an inert message. Only after persisting its message
+ID are controls enabled. Authorization is checked again at registration. No
+database transaction spans Discord I/O, and uncertain sends are never retried
+automatically. A crash before registration can leave an inert Discord message;
+it may require manual deletion. Unregistered reservations are pruned after one
+hour; late completions cannot bind to a new reservation and attempt to delete
+their inert message. Failed DB cleanup does not skip attempted Discord cleanup.
+
+Deleting an occurrence sets publication FKs to null, preserving cleanup
+tombstones. The worker replaces their cards with an unavailable message and
+removes controls, then deletes the publication record. Discord Not Found also
+removes only that publication; RSVP/event data is untouched. Missing permissions
+retain tombstones for retry. Guild deletion cascades its publication records.
+Binding and card data are read in one database snapshot, so event deletion and
+SQLite event-ID reuse cannot retarget an old card. A Discord edit already in
+flight cannot be recalled, but subsequent reconciliation corrects it and stale
+buttons cannot authorize RSVP for a replacement occurrence.
+
+Apply the migration before starting this version. Downgrade refuses while
+publication records remain, to avoid orphaning active cards. No attendance,
+automatic role mentions, RSVP reminders, deadlines, or statistics are added.
+
 ## Technology
 
 - Python

@@ -354,6 +354,9 @@ def setup_event_commands(
         await interaction.response.send_message(
             f"✅ RSVP for occurrence `{event_id}` set to `{response}`.", ephemeral=True,
         )
+        cards = getattr(getattr(interaction, "client", None), "event_cards", None)
+        if cards is not None:
+            await cards.refresh(event_id=event_id)
 
     @event_group.command(name="rsvps", description="View an alliance occurrence's RSVP summary.")
     async def rsvps(interaction: discord.Interaction, event_id: app_commands.Range[int, 1]) -> None:
@@ -372,5 +375,27 @@ def setup_event_commands(
         await interaction.response.send_message(pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         for page in pages[1:]:
             await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @event_group.command(name="publish", description="Publish a concrete alliance event card to a text channel.")
+    async def publish(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
+                      channel: discord.TextChannel) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.", ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            message = await interaction.client.event_cards.publish(
+                interaction.guild, channel, event_id, interaction.user.id,
+                interaction.user.guild_permissions.administrator,
+            )
+        except EventManagementError as error:
+            await interaction.followup.send(str(error), ephemeral=True)
+            return
+        except discord.HTTPException:
+            await interaction.followup.send("❌ Discord could not publish the event card.", ephemeral=True)
+            return
+        await interaction.followup.send(f"✅ Event card published: {message.jump_url}", ephemeral=True)
 
     tree.add_command(event_group)
