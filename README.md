@@ -177,6 +177,61 @@ version. Downgrade to the preceding schema preserves one-time data when no
 weekly series exist; it deliberately refuses to discard any weekly series or
 history. Back up the database before migration.
 
+### Participation and RSVP
+
+`/event create` accepts `participation:none|optional|required`, defaulting to
+`none` for both one-time and weekly events. `none` is informational/reminder-only;
+`optional` allows responses; `required` means a response is expected. Required
+does not enforce a response, block other actions, punish members, or send RSVP
+reminders. Upcoming lists label optional/required modes and omit the default.
+Officers can change the mode with `/event edit event_id:<id> participation:<mode>`
+for one-time events or `/event edit-series series_id:<id> participation:<mode>`.
+These use the existing alliance R4/R5 and server administrator permissions.
+
+Linked alliance members of any rank can use
+`/event rsvp event_id:<occurrence-id> response:going|not_going|maybe`. The ID must
+identify a concrete occurrence in their alliance and current Discord server.
+Being a server administrator alone does not grant membership for submitting an
+RSVP. The event must be scheduled, not stopped/cancelled, strictly in the future,
+and have optional/required participation. Responses cannot be created or changed
+at/after start. Each user has one current response per occurrence; changes update
+that row while retaining its original creation time.
+
+`/event rsvps event_id:<occurrence-id>` provides an ephemeral, paginated summary
+with counts and users under Going, Maybe, and Not Going. Only that alliance's
+R4/R5 and administrators of its server can view it, including after expiry,
+cancellation, stopping, or disabling participation. Displayed user mentions do
+not send notifications. Disabling participation retains all responses, blocks
+new/changed responses, and keeps existing responses available if re-enabled.
+Removing a member blocks further RSVP changes without erasing their prior
+intention; authorized managers can still see the stored record.
+
+Participation is a snapshot on each occurrence and versioned weekly schedule.
+Changing a series mode updates its existing **future scheduled occurrences**
+unless their `participation_overridden` flag is set. Existing occurrence IDs,
+RSVPs, and reminder state survive a mode-only change. Past/cancelled occurrences
+are unchanged; unfinished historical backfill uses the closed schedule's saved
+mode. Newly generated occurrences inherit their schedule version's mode. A
+separate override flag supports later occurrence-only participation commands
+independently of other exception fields; no override command is added here.
+Changing the weekly time retains obsolete cancelled occurrences and their RSVPs;
+replacement occurrences have new IDs and start without responses.
+
+RSVP records **intention, not attendance**. Rescheduling a one-time event retains
+its existing RSVP records without modifying their timestamps or responses.
+**A retained RSVP must not be interpreted as reconfirmation after a schedule
+change.** This foundation has no RSVP versioning, stale-response tracking,
+reconfirmation state, attendance, non-responder chasing, or statistics.
+
+Migration `d82a19f603b7`, following `c41e62b79a10`, defaults existing event, series,
+and schedule rows to `none` and adds `event_rsvps`. Its composite primary key
+enforces uniqueness for `(event_id, discord_user_id)`; deleting an occurrence
+cascades its RSVP records. Timestamps are UTC-naive. RSVP writes use the same
+short SQLite write-lock pattern as event management, serializing membership,
+participation and time checks with edits/stops/deletes, without Discord I/O
+inside the transaction. Apply `alembic upgrade head` before starting the new bot.
+Downgrade refuses to discard stored RSVPs or non-default participation settings.
+
 ## Technology
 
 - Python

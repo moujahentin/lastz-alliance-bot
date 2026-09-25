@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker
 
@@ -28,6 +29,7 @@ class WeeklyMigrationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.config = Config(str(root / "alembic.ini"), stdout=StringIO())
         self.config.set_main_option("script_location", str(root / "migrations"))
+        self.head = ScriptDirectory.from_config(self.config).get_current_head()
         self.engine = create_engine(url)
         self.addCleanup(self.engine.dispose)
 
@@ -77,10 +79,10 @@ class WeeklyMigrationTests(unittest.TestCase):
                 "SELECT series_id,schedule_id,nominal_at,status,is_exception FROM events"
             )).all(), [(None, None, None, "scheduled", 0)] * 6)
             self.assertEqual(connection.execute(text("PRAGMA foreign_key_check")).all(), [])
-            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), "c41e62b79a10")
+            self.assertEqual(connection.scalar(text("SELECT version_num FROM alembic_version")), self.head)
         command.current(self.config)
         command.check(self.config)
-        self.assertIn("c41e62b79a10 (head)", self.config.stdout.getvalue())
+        self.assertIn(f"{self.head} (head)", self.config.stdout.getvalue())
         self.assertIn("No new upgrade operations detected", self.config.stdout.getvalue())
 
     def test_downgrade_and_reupgrade_preserve_all_existing_data(self):

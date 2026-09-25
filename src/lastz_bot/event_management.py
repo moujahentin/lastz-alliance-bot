@@ -15,6 +15,11 @@ class EventManagementError(ValueError):
     """A command-safe validation or access error."""
 
 
+def validate_participation(value: str) -> None:
+    if value not in {"none", "optional", "required"}:
+        raise EventManagementError("❌ Participation must be none, optional, or required.")
+
+
 def validate_one_time_start(starts_at: datetime, now: datetime) -> None:
     """Require a strictly future UTC-naive start, without rounding the clock.
 
@@ -65,13 +70,16 @@ def edit_event(
     name: str | None = None,
     starts_at: str | None = None,
     description: str | None = None,
+    participation: str | None = None,
 ) -> EditedEvent:
-    if name is None and starts_at is None and description is None:
+    if all(value is None for value in (name, starts_at, description, participation)):
         raise EventManagementError("❌ Provide at least one field to edit.")
     if name is not None:
         name = name.strip()
         if not name:
             raise EventManagementError("❌ Event name cannot be empty.")
+    if participation is not None:
+        validate_participation(participation)
     new_start = None
     if starts_at is not None:
         try:
@@ -95,6 +103,9 @@ def edit_event(
             event.name = name
         if description is not None:
             event.description = description.strip() or None
+        if participation is not None:
+            event.participation = participation
+        # RSVP intentions are retained, not reconfirmed, when the time changes.
         if rescheduled:
             event.starts_at = new_start
             session.execute(delete(EventReminder).where(EventReminder.event_id == event.id))

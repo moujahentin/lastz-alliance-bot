@@ -149,7 +149,10 @@ class EventSeries(Base):
     __tablename__ = "event_series"
     __table_args__ = (
         UniqueConstraint("id", "alliance_id", name="uq_series_id_alliance"),
+        CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_series_participation"),
     )
+
+    participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     id: Mapped[int] = mapped_column(primary_key=True)
     alliance_id: Mapped[int] = mapped_column(
@@ -173,8 +176,11 @@ class WeeklySchedule(Base):
     __tablename__ = "weekly_schedules"
     __table_args__ = (
         UniqueConstraint("id", "series_id", name="uq_schedule_id_series"),
+        CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_schedule_participation"),
         Index("uq_weekly_schedule_open", "series_id", unique=True, sqlite_where=text("ends_at IS NULL")),
     )
+
+    participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     id: Mapped[int] = mapped_column(primary_key=True)
     series_id: Mapped[int] = mapped_column(
@@ -207,10 +213,15 @@ class EventOccurrence(Base):
             name="ck_occurrence_series_slot",
         ),
         CheckConstraint("status IN ('scheduled', 'completed', 'cancelled')", name="ck_occurrence_status"),
+        CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_occurrence_participation"),
     )
+
+    participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
     series_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     schedule_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Reserved for future occurrence-only participation commands.
+    participation_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Original AT slot identifies the occurrence even if starts_at is overridden.
     nominal_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="scheduled", server_default="scheduled")
@@ -295,3 +306,22 @@ class EventReminder(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
     event: Mapped["EventOccurrence"] = relationship(back_populates="reminders")
+
+
+class EventRSVP(Base):
+    """Current stated intention for a concrete occurrence, never attendance.
+
+    Retained through participation disable/re-enable and one-time rescheduling.
+    Retention does not mean the user reconfirmed a changed schedule.
+    """
+
+    __tablename__ = "event_rsvps"
+    __table_args__ = (
+        CheckConstraint("response IN ('going', 'not_going', 'maybe')", name="ck_event_rsvps_response"),
+    )
+
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    discord_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    response: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
