@@ -150,10 +150,15 @@ class EventSeries(Base):
 
     __tablename__ = "event_series"
     __table_args__ = (
+        CheckConstraint("deadline_minutes IS NULL OR deadline_minutes > 0", name="ck_series_deadline"),
+        CheckConstraint("missing_reminder = 0 OR deadline_minutes IS NOT NULL", name="ck_series_missing_deadline"),
         UniqueConstraint("id", "alliance_id", name="uq_series_id_alliance"),
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_series_participation"),
         CheckConstraint("audience BETWEEN 1 AND 31", name="ck_series_audience"),
     )
+
+    deadline_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    missing_reminder: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
@@ -179,11 +184,16 @@ class WeeklySchedule(Base):
 
     __tablename__ = "weekly_schedules"
     __table_args__ = (
+        CheckConstraint("deadline_minutes IS NULL OR deadline_minutes > 0", name="ck_schedule_deadline"),
+        CheckConstraint("missing_reminder = 0 OR deadline_minutes IS NOT NULL", name="ck_schedule_missing_deadline"),
         UniqueConstraint("id", "series_id", name="uq_schedule_id_series"),
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_schedule_participation"),
         CheckConstraint("audience BETWEEN 1 AND 31", name="ck_schedule_audience"),
         Index("uq_weekly_schedule_open", "series_id", unique=True, sqlite_where=text("ends_at IS NULL")),
     )
+
+    deadline_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    missing_reminder: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
@@ -204,6 +214,8 @@ class EventOccurrence(Base):
 
     __tablename__ = "events"
     __table_args__ = (
+        CheckConstraint("rsvp_deadline IS NULL OR rsvp_deadline < starts_at", name="ck_occurrence_deadline"),
+        CheckConstraint("missing_reminder = 0 OR rsvp_deadline IS NOT NULL", name="ck_occurrence_missing_deadline"),
         ForeignKeyConstraint(
             ["series_id", "alliance_id"], ["event_series.id", "event_series.alliance_id"],
             name="fk_occurrence_series_tenant", ondelete="RESTRICT",
@@ -222,6 +234,10 @@ class EventOccurrence(Base):
         CheckConstraint("participation IN ('none', 'optional', 'required')", name="ck_occurrence_participation"),
         CheckConstraint("audience BETWEEN 1 AND 31", name="ck_occurrence_audience"),
     )
+
+    rsvp_deadline: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    missing_reminder: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    deadline_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     audience: Mapped[int] = mapped_column(nullable=False, default=31, server_default="31")
     participation: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
@@ -380,3 +396,19 @@ class EventAudienceChange(Base):
     new_audience: Mapped[int] = mapped_column(nullable=False)
     actor_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
+class RSVPReminder(Base):
+    """At most one targeted DM attempt per occurrence/user AND membership."""
+    __tablename__ = "rsvp_reminders"
+    __table_args__ = (
+        UniqueConstraint("event_id", "member_id", name="uq_rsvp_reminder_member"),
+        CheckConstraint("status IN ('claimed', 'attempted', 'sent')", name="ck_rsvp_reminder_status"),
+    )
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    discord_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+    claim_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)

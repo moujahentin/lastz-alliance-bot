@@ -182,8 +182,9 @@ history. Back up the database before migration.
 `/event create` accepts `participation:none|optional|required`, defaulting to
 `none` for both one-time and weekly events. `none` is informational/reminder-only;
 `optional` allows responses; `required` means a response is expected. Required
-does not enforce a response, block other actions, punish members, or send RSVP
-reminders. Upcoming lists label optional/required modes and omit the default.
+does not enforce a response, block other actions, or punish members. Targeted
+RSVP reminders require separate explicit opt-in and a deadline (see below).
+Upcoming lists label optional/required modes and omit the default.
 Officers can change the mode with `/event edit event_id:<id> participation:<mode>`
 for one-time events or `/event edit-series series_id:<id> participation:<mode>`.
 These use the existing alliance R4/R5 and server administrator permissions.
@@ -260,8 +261,8 @@ Deactivate/reactivate preserves the membership ID, Discord link, and historical
 RSVP intentions. Deactivated members cannot submit/change RSVPs or belong to the
 current eligible audience. Their old responses remain visible to authorized
 managers; they are not future non-responders. Re-enabling membership does not
-reconfirm old responses. No attendance or participation-reminder behavior is
-inferred or added.
+reconfirm old responses. Deactivation never implies attendance or authorizes
+future reminders.
 
 `membership_changes` records before/after rank, active state, and Discord link,
 the membership, acting Discord user, and UTC-naive change time. Creation and link
@@ -276,8 +277,9 @@ or exact comma-separated ranks such as `R1,R2,R4` (`+` separators also work).
 Omit it on edit to preserve the current audience. Empty or unknown rank sets are
 rejected. Everyone means all active memberships in that alliance. Audience and
 participation are independent: optional permits eligible responses; required
-expresses that eligible members are expected to respond, without adding counts,
-deadlines, DMs, penalties, or enforcement. Cards display audience; upcoming lists
+expresses that eligible members are expected to respond. Deadlines and targeted
+reminders are separate configuration; there are no penalties or attendance
+inference. Cards display audience; upcoming lists
 label restricted audiences. A visible card does not grant RSVP permission.
 
 The database stores each exact rank set as a checked five-bit mask (R1 bit 0
@@ -310,6 +312,103 @@ allowed only before new membership/audience changes; it refuses to discard
 new ranks, inactive state, audit actions, or restricted audience configuration.
 Persistent routing, card reconciliation, tombstones, and reservation identity
 remain unchanged; cards converge to new audiences from database snapshots.
+
+### RSVP deadlines, No Response, and targeted reminders
+
+RSVP deadlines are reporting/reminder deadlines, not locks. Eligible members can
+still submit or change Going, Maybe, or Not Going after the deadline, until the
+existing occurrence-start/lifecycle rules close RSVP. No reconfirmation or
+attendance workflow is added. All existing RSVP records survive policy edits.
+
+Use the existing commands (no additional command group):
+
+- One-time create/edit: `rsvp_deadline:2026-10-02 18:00` in Apocalypse Time,
+  optionally `missing_reminder:true` for an event starting later that day.
+- One-time edit: `rsvp_deadline:none missing_reminder:false` clears the deadline.
+- Weekly create (`recurrence:weekly`)/`edit-series`: `deadline_minutes:120` means
+  two hours before every occurrence. `deadline_minutes:0 missing_reminder:false`
+  clears it. Absolute deadlines are rejected for weekly create; relative options
+  are rejected for one-time create.
+- Omitted edit options preserve existing values. `missing_reminder:false`
+  disables DMs without clearing the deadline. Lead time is fixed at 60 minutes
+  in this PR; no configurable lead option or repeated reminders are added.
+
+An absolute deadline is stored as canonical UTC-naive time using the same AT
+helpers as event starts. It must be strictly before the occurrence; equality or
+later is rejected by business validation and database constraints. A past
+deadline on a future event is allowed because it reports a target, not a hard
+lock; it produces no catch-up DM after the deadline. One-time rescheduling keeps
+the absolute deadline unless explicitly edited. Rescheduling before/equal to it
+is rejected atomically unless the deadline is changed/cleared in the same edit.
+Clearing a deadline requires explicitly disabling an enabled reminder; settings
+are never silently changed to fix invalid input. Stored reminder opt-in may
+remain dormant on optional/none events; only required events can send these DMs.
+
+For required events, `/event rsvps` shows **No Response** alongside the three
+response groups. This is computed from currently active memberships in the
+same guild/alliance, their current rank against the occurrence's audience, and
+the absence of a stored RSVP for their current Discord link. Going, Maybe, and
+Not Going all exclude a member. Unlinked eligible players appear by game name,
+marked unlinked/cannot DM. No synthetic RSVP rows are written. Even when viewing
+an old occurrence this is explicitly current eligibility, not a reconstruction
+of historical non-response, a penalty, or evidence of attendance. Optional/none
+summaries do not label members as mandatory non-responders.
+
+Cards show a required-event No Response count and the AT deadline when present.
+A passed-deadline label does not disable otherwise valid buttons. Existing
+approximately 30-second reconciliation updates membership/audience/count/policy
+changes across all cards; backend checks remain authoritative while cards lag.
+
+The existing reminder worker runs a targeted RSVP processor after its normal
+occurrence-generation and event-reminder work. It sends only in the interval
+`deadline - 60 minutes <= now < deadline`, and only before event start. Restart
+inside that window may send the one opportunity; restart at/after the deadline
+cannot. Existing channel reminders and their 30/10-minute rules are unchanged.
+No extra backfill pass or independent scheduler is introduced.
+
+`rsvp_reminders` enforces one terminal opportunity per occurrence/Discord user
+and per occurrence/membership. The worker commits `claimed` before lookup,
+resolves the Discord user and private channel, then acquires a short SQLite
+`BEGIN IMMEDIATE` transaction to recheck the claim token, tenant, current active
+membership/rank/audience, required participation, current deadline/window,
+series state, and missing response. It atomically changes `claimed` to
+`attempted` before starting the DM. Even concurrent replay of the same delivery
+cannot authorize a second send. Successful completion becomes `sent` only if
+its token still matches. No database lock spans Discord I/O.
+
+Every persisted state suppresses retry. Blocked DMs, lookup errors, uncertain
+HTTP failures, cancellation, crashes, or failed success recording can therefore
+lose a reminder, but never automatically produce a duplicate application send.
+Failures are not recorded as successfully sent. Unlinked members never get a
+claim or count as delivered. No public missing-response announcement is sent.
+
+Effective membership rank/state/link changes, occurrence audience/participation/
+deadline/opt-in changes, and reschedules invalidate affected outstanding claim
+tokens without deleting their terminal records. Changing a setting away and back
+cannot resurrect an old claim or grant another nag. No-op settings and text-only
+edits preserve valid pending authority. Series stops invalidate future claims;
+event deletion cascades claims, and unique tokens protect against SQLite event-ID
+reuse or stale completion. An RSVP committed before final authorization suppresses
+the DM. A Discord request already authorized/in flight cannot be recalled;
+changes after that final check can still race the network send, as with existing
+event reminders. This boundary is deliberate and covered by tests.
+
+Weekly series and schedule versions store a nullable positive minute offset plus
+opt-in; each occurrence materializes its own absolute UTC deadline. Metadata
+policy edits preserve existing future occurrence IDs/RSVPs and inherit the new
+policy unless the independent reserved `deadline_overridden` flag is set.
+Historical/cancelled rows retain their configuration. Closed versions finish
+bounded historical backfill with their original deadline/reminder policy, without
+sending expired reminders. Weekday/time changes retain cancelled old occurrences
+and create new concrete occurrences under the new policy. No per-occurrence
+exception UI is added.
+
+Migration `a25d49c036e1` follows `f14c38b925d0`. Existing events and weekly
+configurations receive no deadline and disabled targeted reminders; all prior
+memberships, audit data, events/history, RSVPs, reminder claims and card bindings
+are preserved. Downgrade refuses to discard configured deadlines or RSVP reminder
+attempts. Stop old processes, back up the database, run `alembic upgrade head`,
+and restart before using the new options.
 
 ### Persistent event cards
 

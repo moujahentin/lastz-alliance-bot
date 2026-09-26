@@ -1,5 +1,8 @@
 """Occurrence-scoped RSVP intentions. These are not attendance/reconfirmation."""
 from dataclasses import dataclass
+from datetime import datetime
+
+import discord
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert
@@ -9,6 +12,8 @@ from lastz_bot.database.models import Alliance, Event, EventPublication, EventRS
 from lastz_bot.event_management import EventManagementError, _managed_event
 from lastz_bot.event_time import utc_now_naive
 from lastz_bot.audiences import includes_rank
+from lastz_bot.nonresponders import NonResponder, nonresponders
+from lastz_bot.event_time import utc_to_apocalypse_time
 from lastz_bot.permissions import get_member_rank
 
 
@@ -58,6 +63,8 @@ class RSVPSummary:
     event_id: int
     participation: str
     groups: dict[str, tuple[int, ...]]
+    no_response: tuple[NonResponder, ...] = ()
+    deadline: datetime | None = None
 
 
 def get_rsvps(sessions: sessionmaker, guild_id: int, event_id: int,
@@ -72,7 +79,8 @@ def get_rsvps(sessions: sessionmaker, guild_id: int, event_id: int,
             groups[record.response].append(record.discord_user_id)
         # Intentionally readable after disable, expiry, cancellation, or stop.
         return RSVPSummary(occurrence.id, occurrence.participation,
-                           {key: tuple(users) for key, users in groups.items()})
+                           {key: tuple(users) for key, users in groups.items()},
+                           nonresponders(session, occurrence, guild_id), occurrence.rsvp_deadline)
 
 
 def summary_pages(summary: RSVPSummary) -> list[str]:
@@ -89,6 +97,13 @@ def summary_pages(summary: RSVPSummary) -> list[str]:
         lines.extend(f"<@{user_id}>" for user_id in users)
         if not users:
             lines.append("—")
+    if summary.participation == "required":
+        lines.append(f"**No Response ({len(summary.no_response)})** — current eligibility, not a historical verdict")
+        lines.extend(f"<@{row.discord_user_id}>" if row.discord_user_id is not None else f"{discord.utils.escape_markdown(row.game_name)[:1000]} (unlinked; cannot DM)" for row in summary.no_response)
+        if not summary.no_response:
+            lines.append("—")
+    if summary.deadline is not None:
+        lines.append(f"RSVP deadline: {utc_to_apocalypse_time(summary.deadline):%Y-%m-%d %H:%M} AT (responses remain open until event start).")
     pages = [""]
     for line in lines:
         if len(pages[-1]) + len(line) + 1 > 1900:

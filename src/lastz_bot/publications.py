@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from lastz_bot.database.models import Alliance, Event, EventPublication, EventRSVP, EventSeries
 from lastz_bot.event_management import EventManagementError, _managed_event
+from lastz_bot.nonresponders import nonresponders
 from lastz_bot.event_time import utc_now_naive
 
 
@@ -23,6 +24,9 @@ class CardState:
     status: str
     audience: int
     counts: tuple[int, int, int]  # Going, Maybe, Not Going.
+    no_response: int | None
+    deadline: datetime | None
+    deadline_passed: bool
 
 
 def read_card(sessions: sessionmaker, event_id: int, guild_id: int) -> CardState | None:
@@ -65,6 +69,9 @@ def _read_card(session, event_id: int, guild_id: int) -> CardState | None:
         status != "scheduled" or occurrence.participation == "none", status,
         occurrence.audience,
         tuple(counts.get(key, 0) for key in ("going", "maybe", "not_going")),
+        len(nonresponders(session, occurrence, guild_id)) if occurrence.participation == "required" else None,
+        occurrence.rsvp_deadline,
+        occurrence.rsvp_deadline is not None and occurrence.rsvp_deadline <= utc_now_naive(),
     )
 
 

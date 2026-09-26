@@ -55,7 +55,16 @@ def card_embed(state):
         embed.add_field(name="Status", value=f"{state.status.capitalize()} — RSVP closed", inline=False)
     for label, count in zip(("Going", "Maybe", "Not Going"), state.counts):
         embed.add_field(name=label, value=str(count))
-    embed.set_footer(text=f"Occurrence ID {state.event_id} • RSVP is intention, not attendance or reconfirmation.")
+    if state.no_response is not None:
+        embed.add_field(name="No Response", value=str(state.no_response))
+    if state.deadline is not None:
+        deadline = utc_to_apocalypse_time(state.deadline)
+        label = "RSVP deadline passed" if state.deadline_passed else "RSVP Deadline"
+        embed.add_field(name=label, value=f"{deadline:%Y-%m-%d %H:%M} AT", inline=False)
+    footer = f"Occurrence ID {state.event_id} • RSVP is intention, not attendance or reconfirmation."
+    if state.no_response is not None:
+        footer += " No Response uses current eligibility."
+    embed.set_footer(text=footer)
     return embed
 
 
