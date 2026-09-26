@@ -16,6 +16,7 @@ class ReminderWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.client = Mock()
         self.client.wait_until_ready = AsyncMock()
         self.worker = ReminderWorker(self.client)
+        self.worker.rsvp_processor.process_pending = AsyncMock()
         self.delivery = ReminderDelivery(
             event_id=1, alliance_id=1, guild_id=1001, channel_id=101,
             alliance_name="Alpha", event_name="Duel @everyone",

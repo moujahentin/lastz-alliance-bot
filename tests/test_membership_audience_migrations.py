@@ -38,7 +38,7 @@ class MembershipAudienceMigrationTests(unittest.TestCase):
             self.assertEqual(connection.scalar(text('SELECT COUNT(*) FROM event_audience_changes')),2)
             self.assertEqual(connection.execute(text('PRAGMA foreign_key_check')).all(),[])
         command.current(self.config); command.check(self.config)
-        self.assertIn('f14c38b925d0 (head)',self.config.stdout.getvalue())
+        self.assertIn(f'{self.head} (head)',self.config.stdout.getvalue())
         self.assertIn('No new upgrade operations detected',self.config.stdout.getvalue())
 
     def test_migrated_rank_audience_constraints_uniqueness_and_tombstones(self):

@@ -15,6 +15,7 @@ from lastz_bot.event_time import (
 from lastz_bot.audiences import parse_audience, audience_label
 from lastz_bot.permissions import get_management_rank
 from lastz_bot.recurrence import create_weekly, edit_series, ensure_occurrences, stop_series
+from lastz_bot.rsvp_policy import parse_deadline, validate_deadline
 from lastz_bot.reminders import active_occurrence
 from lastz_bot.rsvp import get_rsvps, set_rsvp, summary_pages
 
@@ -31,7 +32,12 @@ def setup_event_commands(
         name="create",
         description="Create an event for an alliance.",
     )
-    @app_commands.describe(audience="Everyone or exact ranks separated by commas, e.g. R1,R2,R4.")
+    @app_commands.describe(
+        audience="Everyone or exact ranks separated by commas, e.g. R1,R2,R4.",
+        rsvp_deadline="One-time: YYYY-MM-DD HH:MM AT. Must precede the start; does not lock RSVP.",
+        deadline_minutes="Weekly: minutes before each occurrence; omit for no deadline.",
+        missing_reminder="Opt in to one missing-RSVP DM per eligible member, 60 minutes before deadline.",
+    )
     async def create(
         interaction: discord.Interaction,
         alliance: str,
@@ -41,6 +47,9 @@ def setup_event_commands(
         recurrence: Literal["once", "weekly"] = "once",
         participation: Literal["none", "optional", "required"] = "none",
         audience: str = "Everyone",
+        rsvp_deadline: str | None = None,
+        deadline_minutes: app_commands.Range[int, 0] | None = None,
+        missing_reminder: bool = False,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -104,17 +113,25 @@ def setup_event_commands(
                 validate_participation(participation)
                 audience_mask = parse_audience(audience)
                 if recurrence == "weekly":
+                    if rsvp_deadline is not None:
+                        raise EventManagementError("❌ Weekly events use deadline_minutes before each occurrence, not an absolute deadline.")
                     series = create_weekly(
                         session, alliance_record, event_name, event_description,
                         event_starts_at, interaction.user.id, utc_now_naive(), participation=participation, audience=audience,
+                        deadline_minutes=deadline_minutes, missing_reminder=missing_reminder,
                     )
                     series_id = series.id
                 else:
+                    if deadline_minutes is not None:
+                        raise EventManagementError("❌ One-time events use rsvp_deadline in Apocalypse Time.")
+                    deadline = parse_deadline(rsvp_deadline) if rsvp_deadline is not None else None
+                    validate_deadline(event_starts_at, deadline, missing_reminder)
                     validate_one_time_start(event_starts_at, utc_now_naive())
                     occurrence = Event(
                         alliance_id=alliance_record.id, name=event_name, description=event_description,
                         starts_at=event_starts_at, created_by_discord_user_id=interaction.user.id,
                         participation=participation, audience=audience_mask,
+                        rsvp_deadline=deadline, missing_reminder=missing_reminder,
                     )
                     session.add(occurrence)
                     session.flush()
@@ -234,6 +251,9 @@ def setup_event_commands(
 
             if event.audience != 31:
                 line += f" — Audience: {audience_label(event.audience)}"
+            if event.rsvp_deadline is not None:
+                deadline = utc_to_apocalypse_time(event.rsvp_deadline)
+                line += f" — RSVP deadline: {deadline:%Y-%m-%d %H:%M} AT"
             event_lines.append(line)
 
         await interaction.response.send_message(
@@ -249,6 +269,8 @@ def setup_event_commands(
         starts_at="New Apocalypse Time (YYYY-MM-DD HH:MM); omit to keep it.",
         description="New description; omit to keep it, or use a space to clear it.",
         audience="Everyone or exact ranks, e.g. R3,R4,R5; omit to keep it.",
+        rsvp_deadline="YYYY-MM-DD HH:MM AT, or none to clear; omit to keep it.",
+        missing_reminder="Enable/disable missing-RSVP DMs; disable when clearing the deadline.",
     )
     async def edit(
         interaction: discord.Interaction,
@@ -258,6 +280,8 @@ def setup_event_commands(
         description: str | None = None,
         participation: Literal["none", "optional", "required"] | None = None,
         audience: str | None = None,
+        rsvp_deadline: str | None = None,
+        missing_reminder: bool | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -270,6 +294,7 @@ def setup_event_commands(
                 SessionLocal, interaction.guild.id, event_id, interaction.user.id,
                 interaction.user.guild_permissions.administrator,
                 name=name, starts_at=starts_at, description=description, participation=participation, audience=audience,
+                rsvp_deadline=rsvp_deadline, missing_reminder=missing_reminder,
             )
         except EventManagementError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
@@ -304,7 +329,12 @@ def setup_event_commands(
         await interaction.response.send_message(f"✅ Event `{event_id}` deleted.", ephemeral=True)
 
     @event_group.command(name="edit-series", description="Edit a whole weekly event series.")
-    @app_commands.describe(time_at="Weekly Apocalypse Time, HH:MM.", audience="Everyone or exact ranks, e.g. R3,R4,R5; omit to keep it.")
+    @app_commands.describe(
+        time_at="Weekly Apocalypse Time, HH:MM.",
+        audience="Everyone or exact ranks, e.g. R3,R4,R5; omit to keep it.",
+        deadline_minutes="Minutes before each occurrence, 0 to clear; omit to keep it.",
+        missing_reminder="Enable/disable missing-RSVP DMs; disable when clearing the deadline.",
+    )
     async def edit_weekly(
         interaction: discord.Interaction,
         series_id: app_commands.Range[int, 1],
@@ -314,6 +344,8 @@ def setup_event_commands(
         time_at: str | None = None,
         participation: Literal["none", "optional", "required"] | None = None,
         audience: str | None = None,
+        deadline_minutes: app_commands.Range[int, 0] | None = None,
+        missing_reminder: bool | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -325,7 +357,8 @@ def setup_event_commands(
             edit_series(SessionLocal, interaction.guild.id, series_id, interaction.user.id,
                         interaction.user.guild_permissions.administrator, name=name, description=description,
                         weekday=days.index(weekday) if weekday is not None else None, time_at=time_at,
-                        participation=participation, audience=audience)
+                        participation=participation, audience=audience,
+                        deadline_minutes=deadline_minutes, missing_reminder=missing_reminder)
         except EventManagementError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
             return

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.event_time import utc_now_naive, utc_to_apocalypse_time
+from lastz_bot.rsvp_reminders import RSVPReminderProcessor
 from lastz_bot.reminders import ReminderDelivery, ReminderProcessor, eligible_threshold
 
 
@@ -20,6 +21,7 @@ class ReminderWorker:
     def __init__(self, client: discord.Client) -> None:
         self.client = client
         self.processor = ReminderProcessor(SessionLocal, self.send)
+        self.rsvp_processor = RSVPReminderProcessor(SessionLocal, self.send_rsvp)
 
     async def send(self, delivery: ReminderDelivery) -> None:
         delivery = self.processor.current_delivery(delivery)
@@ -43,10 +45,38 @@ class ReminderWorker:
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
+    async def send_rsvp(self, delivery):
+        # Resolve the private channel first: network lookups may take long enough
+        # for the member to respond or an officer to change eligibility.
+        user = self.client.get_user(delivery.discord_user_id)
+        if user is None:
+            user = await self.client.fetch_user(delivery.discord_user_id)
+        if user.id != delivery.discord_user_id:
+            raise RuntimeError("RSVP reminder recipient mismatch")
+        channel = await user.create_dm()
+        delivery = self.rsvp_processor.authorize_delivery(delivery)
+        if delivery is None:
+            raise RuntimeError("RSVP reminder is no longer authorized")
+        name = discord.utils.escape_markdown(delivery.event_name)
+        alliance = discord.utils.escape_markdown(delivery.alliance_name)
+        starts = utc_to_apocalypse_time(delivery.starts_at)
+        deadline = utc_to_apocalypse_time(delivery.deadline)
+        # No await between final DB authorization and starting the send. As with
+        # event reminders, an already in-flight request cannot be recalled.
+        await channel.send(
+            f"Your RSVP is still missing for **{name}** in **{alliance}**. "
+            f"Event: `{starts:%Y-%m-%d %H:%M}` AT. "
+            f"RSVP deadline: `{deadline:%Y-%m-%d %H:%M}` AT. "
+            f"Please respond using the server's event card buttons or "
+            f"`/event rsvp event_id:{delivery.event_id}`. This is RSVP intention, not attendance.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     @tasks.loop(seconds=30)
     async def poll(self) -> None:
         try:
             await self.processor.process_pending()
+            await self.rsvp_processor.process_pending()
         except SQLAlchemyError:
             # A transient database failure must not permanently stop the loop.
             # Any previously committed claim remains ineligible on the next poll.

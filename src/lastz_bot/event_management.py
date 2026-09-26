@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lastz_bot.database.models import Alliance, Event, EventReminder, EventAudienceChange
 from lastz_bot.event_time import parse_apocalypse_time, utc_now_naive
+from lastz_bot.rsvp_policy import parse_deadline, validate_deadline, invalidate_missing_claims
 from lastz_bot.permissions import get_management_rank
 
 
@@ -72,8 +73,10 @@ def edit_event(
     description: str | None = None,
     participation: str | None = None,
     audience: str | None = None,
+    rsvp_deadline: str | None = None,
+    missing_reminder: bool | None = None,
 ) -> EditedEvent:
-    if all(value is None for value in (name, starts_at, description, participation, audience)):
+    if all(value is None for value in (name, starts_at, description, participation, audience, rsvp_deadline, missing_reminder)):
         raise EventManagementError("❌ Provide at least one field to edit.")
     if name is not None:
         name = name.strip()
@@ -100,6 +103,14 @@ def edit_event(
         rescheduled = new_start is not None and new_start != event.starts_at
         if event.series_id is not None:
             raise EventManagementError("❌ This is a weekly occurrence. Use `/event edit-series` with its series ID.")
+        target_deadline = parse_deadline(rsvp_deadline) if rsvp_deadline is not None else event.rsvp_deadline
+        target_reminder = missing_reminder if missing_reminder is not None else event.missing_reminder
+        validate_deadline(new_start if new_start is not None else event.starts_at, target_deadline, target_reminder)
+        policy_changed = (target_deadline, target_reminder) != (event.rsvp_deadline, event.missing_reminder)
+        if (policy_changed or rescheduled or (participation is not None and participation != event.participation)
+                or (new_audience is not None and new_audience != event.audience)):
+            invalidate_missing_claims(session, [event.id])
+        event.rsvp_deadline, event.missing_reminder = target_deadline, target_reminder
         if new_audience is not None and new_audience != event.audience:
             if event.starts_at <= utc_now_naive() or event.status != "scheduled":
                 raise EventManagementError("❌ Historical occurrence audiences cannot be changed.")

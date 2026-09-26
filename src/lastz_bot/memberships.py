@@ -1,8 +1,8 @@
 """Alliance-scoped membership lifecycle; no Discord I/O inside transactions."""
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from lastz_bot.database.models import Alliance, Member, MembershipChange
+from lastz_bot.database.models import Alliance, Member, MembershipChange, RSVPReminder
 from lastz_bot.event_management import EventManagementError
 from lastz_bot.event_time import utc_now_naive
 from lastz_bot.permissions import RANK_LEVELS, can_manage_target, get_management_rank
@@ -27,6 +27,11 @@ def _audit(session, member, previous, actor_id):
     current = (member.rank, member.active, member.discord_user_id)
     if current == previous:
         return
+    # A restored rank/link/state must never resurrect old delivery authority.
+    session.execute(update(RSVPReminder).where(
+        RSVPReminder.member_id == member.id,
+        RSVPReminder.status.in_(("claimed", "attempted")),
+    ).values(claim_token=None))
     session.add(MembershipChange(member_id=member.id,
         previous_rank=previous[0], previous_active=previous[1], previous_discord_user_id=previous[2],
         new_rank=current[0], new_active=current[1], new_discord_user_id=current[2],
