@@ -211,4 +211,28 @@ def setup_alliance_commands(
             ephemeral=True,
         )
 
+    @alliance_group.command(name="event-delivery", description="Configure automatic cards and independent player DMs, or view settings.")
+    async def event_delivery(
+        interaction: discord.Interaction, alliance: str, auto_publish: bool | None = None,
+        dm_24h: bool | None = None, dm_1h: bool | None = None, dm_15m: bool | None = None,
+    ) -> None:
+        from lastz_bot.player_policy import configure_delivery, LEADS
+        from lastz_bot.event_management import EventManagementError
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this command inside a Discord server.", ephemeral=True)
+            return
+        try:
+            enabled, mask = configure_delivery(SessionLocal, interaction.guild.id, alliance, interaction.user.id,
+                interaction.user.guild_permissions.administrator, auto_publish=auto_publish,
+                dm_24h=dm_24h, dm_1h=dm_1h, dm_15m=dm_15m)
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        leads = ", ".join(f"{lead}m" for bit, lead in enumerate(LEADS) if mask & (1 << bit)) or "disabled"
+        await interaction.response.send_message(
+            f"Automatic cards: {'enabled' if enabled else 'disabled'} (uses /alliance set-channel). "
+            f"Normal event DMs: {leads}. Existing channel and missing-RSVP reminders keep their own settings.",
+            ephemeral=True,
+        )
+
     tree.add_command(alliance_group)

@@ -8,10 +8,11 @@ from discord.ext import tasks
 from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from lastz_bot.database.models import EventPublication
+from lastz_bot.database.models import EventPublication, Event
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.event_management import EventManagementError
-from lastz_bot.event_time import utc_to_apocalypse_time
+from lastz_bot.event_time import utc_to_apocalypse_time, discord_timestamp, utc_now_naive
+from lastz_bot.automatic_publications import (candidates, PUBLICATION_BATCH, reserve_automatic, authorize_automatic, register_automatic)
 from lastz_bot.publications import (
     abandon_publication, authorize_publish, prune_pending_publications,
     read_publication_card, record_publication, reserve_publication, resolve_publication,
@@ -46,6 +47,7 @@ def card_embed(state):
                           colour=discord.Colour.blurple())
     starts = utc_to_apocalypse_time(state.starts_at)
     embed.add_field(name="Apocalypse Time", value=f"{starts:%Y-%m-%d %H:%M} AT", inline=False)
+    embed.add_field(name="Your local time", value=discord_timestamp(state.starts_at), inline=False)
     embed.add_field(name="Alliance", value=discord.utils.escape_markdown(state.alliance)[:1024])
     embed.add_field(name="Event", value=f"Weekly — Series ID {state.series_id}" if state.series_id else "One-time")
     embed.add_field(name="Audience", value=audience_label(state.audience), inline=False)
@@ -75,6 +77,9 @@ class EventCards:
         self.lock = asyncio.Lock()
         self.rendered = {}
         self.registered = False
+        # Scan bounded pages fairly even when an earlier destination stays broken.
+        # This cursor is only an optimization; all delivery authority is in SQLite.
+        self.automatic_cursor = 0
 
     def register(self):
         # A global persistent router covers old messages without recreating per-
@@ -109,6 +114,44 @@ class EventCards:
             raise EventManagementError("❌ Could not register the event card; please try publishing again.")
         await self.refresh(event_id=event_id)
         return message
+
+    async def publish_automatic(self):
+        try:
+            with self.sessions() as session:
+                query = candidates(utc_now_naive()).where(Event.id > self.automatic_cursor)
+                rows = session.execute(query.order_by(Event.id).limit(PUBLICATION_BATCH)).all()
+                if not rows and self.automatic_cursor:
+                    rows = session.execute(candidates(utc_now_naive()).order_by(Event.id).limit(PUBLICATION_BATCH)).all()
+                self.automatic_cursor = rows[-1][0].id if rows else 0
+            for event, alliance in rows:
+                guild = self.client.get_guild(alliance.guild_id)
+                channel = guild.get_channel(alliance.reminder_channel_id) if guild else None
+                if not isinstance(channel, discord.TextChannel) or channel.guild.id != alliance.guild_id:
+                    continue  # No send was possible; configuration may be repaired.
+                permissions = channel.permissions_for(guild.me)
+                if not all((permissions.view_channel, permissions.send_messages, permissions.embed_links)):
+                    continue
+                reservation = reserve_automatic(self.sessions, event.id, alliance.guild_id, channel.id, utc_now_naive)
+                if reservation is None:
+                    continue
+                message = None
+                try:
+                    state = authorize_automatic(self.sessions, reservation, utc_now_naive)
+                    if state is None:
+                        continue
+                    # Final serialized authorization precedes send without an await.
+                    message = await channel.send(embed=card_embed(state), allowed_mentions=discord.AllowedMentions.none())
+                    if not register_automatic(self.sessions, reservation, message.id):
+                        raise EventManagementError("Automatic reservation no longer exists")
+                except (SQLAlchemyError, discord.HTTPException, EventManagementError):
+                    with suppress(SQLAlchemyError):
+                        abandon_publication(self.sessions, reservation)
+                    if message is not None:
+                        with suppress(discord.HTTPException):
+                            await message.delete()
+                    logger.warning("Automatic event card attempt failed; no automatic retry: event=%s", event.id)
+        except SQLAlchemyError:
+            logger.warning("Automatic publication database processing failed; will poll again")
 
     async def respond(self, interaction, response):
         await interaction.response.defer(ephemeral=True)
@@ -190,6 +233,7 @@ class EventCards:
             prune_pending_publications(self.sessions)
         except SQLAlchemyError:
             logger.warning("Pending event-card cleanup failed; will retry")
+        await self.publish_automatic()
         await self.refresh()
 
     @poll.before_loop

@@ -13,6 +13,7 @@ from sqlalchemy import or_, select, text, update
 from lastz_bot.database.models import Alliance, Event, RSVPReminder
 from lastz_bot.event_time import utc_now_naive
 from lastz_bot.nonresponders import nonresponders
+from lastz_bot.player_events import card_navigation
 from lastz_bot.reminders import active_occurrence
 from lastz_bot.rsvp_policy import MISSING_REMINDER_LEAD
 
@@ -31,6 +32,7 @@ class RSVPReminderDelivery:
     starts_at: datetime
     deadline: datetime
     claim_token: str
+    navigation: str = ""
 
 
 class RSVPReminderProcessor:
@@ -94,7 +96,8 @@ class RSVPReminderProcessor:
                 return None
             current = RSVPReminderDelivery(delivery.event_id, member.member_id, member.discord_user_id,
                 alliance.id, alliance.guild_id, alliance.name, occurrence.name,
-                occurrence.starts_at, occurrence.rsvp_deadline, delivery.claim_token)
+                occurrence.starts_at, occurrence.rsvp_deadline, delivery.claim_token,
+                card_navigation(session, occurrence, alliance))
             if authorize:
                 claim.status = 'attempted'
                 session.commit()  # Before send: even replaying this delivery cannot send twice.

@@ -34,6 +34,7 @@ class Guild(Base):
 class Alliance(Base):
     __tablename__ = "alliances"
     __table_args__ = (
+        CheckConstraint("player_reminder_mask BETWEEN 0 AND 7", name="ck_alliance_player_reminders"),
         UniqueConstraint(
             "guild_id",
             "name",
@@ -57,6 +58,9 @@ class Alliance(Base):
         String(100),
         nullable=False,
     )
+
+    auto_publish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    player_reminder_mask: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
 
     reminder_channel_id: Mapped[int | None] = mapped_column(
         BigInteger,
@@ -407,6 +411,33 @@ class RSVPReminder(Base):
     )
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
     discord_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
+    claim_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+
+class AutomaticPublication(Base):
+    """Terminal automatic attempt, independent of removable card reservations."""
+    __tablename__ = "automatic_publications"
+    attempted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    publication_id: Mapped[int | None] = mapped_column(ForeignKey("event_publications.id", ondelete="SET NULL"), nullable=True, unique=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+
+
+class PlayerReminder(Base):
+    """Independent normal event DM ledger; every row suppresses retry."""
+    __tablename__ = "player_reminders"
+    __table_args__ = (
+        UniqueConstraint("event_id", "member_id", "lead_minutes", name="uq_player_reminder_member"),
+        CheckConstraint("lead_minutes IN (1440, 60, 15)", name="ck_player_reminder_lead"),
+        CheckConstraint("status IN ('claimed', 'attempted', 'sent', 'skipped')", name="ck_player_reminder_status"),
+    )
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    discord_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    lead_minutes: Mapped[int] = mapped_column(primary_key=True)
     member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), nullable=False)
     claim_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
