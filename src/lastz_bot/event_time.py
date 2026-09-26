@@ -29,3 +29,9 @@ def utc_to_apocalypse_time(value: datetime) -> datetime:
 def utc_now_naive() -> datetime:
     """Return current UTC in the same naive representation as stored events."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def discord_timestamp(value: datetime) -> str:
+    """Interpret the canonical stored instant as UTC, never host-local time."""
+    seconds = int(value.replace(tzinfo=timezone.utc).timestamp())
+    return f"<t:{seconds}:F> (<t:{seconds}:R>)"

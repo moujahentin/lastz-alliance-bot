@@ -68,7 +68,11 @@ class WeeklyMigrationTests(unittest.TestCase):
                     "FROM events ORDER BY id"
                 )).all(),
                 connection.execute(text("SELECT * FROM event_reminders ORDER BY event_id,lead_minutes")).all(),
-                connection.execute(text("SELECT * FROM alliances ORDER BY id")).all(),
+                # Compare every legacy column across upgrades/downgrades even
+                # when a later migration appends new, separately-tested settings.
+                connection.execute(text(
+                    "SELECT id,guild_id,name,created_at,reminder_channel_id FROM alliances ORDER BY id"
+                )).all(),
             )
 
     def test_upgrade_preserves_exact_legacy_ids_times_channels_and_claims(self):

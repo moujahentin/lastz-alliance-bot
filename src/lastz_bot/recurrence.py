@@ -143,6 +143,8 @@ def _cancel_future(session: Session, series_id: int, now: datetime) -> None:
     session.execute(update(EventReminder).where(EventReminder.event_id.in_(future_ids)).values(claim_token=None))
     session.execute(update(Event).where(Event.id.in_(future_ids)).values(status="cancelled"))
     invalidate_missing_claims(session, future_ids)
+    from lastz_bot.player_policy import invalidate_player_claims
+    invalidate_player_claims(session, future_ids)
 
 
 def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id: int,
@@ -229,6 +231,12 @@ def edit_series(sessions: sessionmaker, guild_id: int, series_id: int, actor_id:
                 Event.status == "scheduled", Event.participation_overridden.is_(False),
             ).values(participation=target_participation))
             invalidate_missing_claims(session, select(Event.id).where(
+                Event.series_id == series.id, Event.starts_at > now,
+                Event.status == "scheduled", Event.audience_overridden.is_(False),
+                Event.audience != target_audience,
+            ))
+            from lastz_bot.player_policy import invalidate_player_claims
+            invalidate_player_claims(session, select(Event.id).where(
                 Event.series_id == series.id, Event.starts_at > now,
                 Event.status == "scheduled", Event.audience_overridden.is_(False),
                 Event.audience != target_audience,

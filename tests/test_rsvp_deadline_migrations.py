@@ -42,7 +42,7 @@ class RSVPDeadlineMigrationTests(unittest.TestCase):
             self.assertEqual(connection.scalar(text('SELECT COUNT(*) FROM rsvp_reminders')),0)
             self.assertEqual(connection.execute(text('PRAGMA foreign_key_check')).all(),[])
         command.current(self.config); command.check(self.config)
-        self.assertIn('a25d49c036e1 (head)',self.config.stdout.getvalue())
+        self.assertIn(f'{self.head} (head)',self.config.stdout.getvalue())
         self.assertIn('No new upgrade operations detected',self.config.stdout.getvalue())
 
     def test_baseline_downgrade_roundtrip_preserves_existing_data(self):

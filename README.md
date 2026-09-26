@@ -472,6 +472,103 @@ Apply the migration before starting this version. Downgrade refuses while
 publication records remain, to avoid orphaning active cards. No attendance,
 automatic role mentions, RSVP reminders, deadlines, or statistics are added.
 
+### Player event experience and opt-in delivery
+
+`/alliance event-delivery alliance:<name>` shows the alliance settings. Active
+R4/R5 and server administrators can supply `auto_publish:true|false` and any of
+`dm_24h:true|false`, `dm_1h:true|false`, `dm_15m:true|false`. Omitted options stay
+unchanged. All four settings start disabled, including for existing alliances.
+These settings apply to currently eligible future occurrences, including existing
+ones. Disabling automatic publication prevents new cards; existing cards continue
+reconciling. Changing settings does not remove events or stored RSVP intentions.
+
+Automatic cards use the **same** `reminder_channel_id` configured by
+`/alliance set-channel`; there is no second event-channel field. The bot needs
+View Channel, Send Messages and Embed Links. Missing channels or permissions
+leave publication pending until repaired, without affecting event creation.
+Future one-time events are eligible immediately; weekly occurrences become
+eligible within **seven days**, with no publication of expired/backfilled rows.
+The existing occurrence generator still creates only the next future weekly slot
+and performs its original bounded historical backfill. Cards are published by the
+existing approximately 30-second card worker and use the same persistent controls,
+binding, snapshots, reconciliation and tombstones as `/event publish`.
+
+`automatic_publications` permits only one automatic attempt per occurrence.
+Reservation and terminal ledger commit together before network I/O. A second
+serialized check reads the current occurrence and consumes send authority before
+the inert Discord message is sent; registration enables its existing RSVP routing.
+Restart before send can lose an opportunity. An uncertain send or registration
+failure is never automatically retried. Removing a reservation/card does not erase
+the terminal attempt. Failed known-message registration attempts Discord cleanup;
+a crash can leave an inert orphan requiring manual deletion. The existing manual
+`/event publish` remains the explicit recovery path and can create additional
+cards. Inspect existing messages before using it after an uncertain send.
+Each cycle scans at most 50 candidates, rotating through persisted pending work
+so an unavailable destination cannot permanently block later alliances.
+
+`/event mine` shows at most five upcoming eligible concrete occurrences;
+`/event next` shows the earliest one; `/event today` shows up to five upcoming
+occurrences in the current **Apocalypse Time calendar day**. Ordering is by start
+then occurrence ID, with an overflow indication. Results are ephemeral, always for
+the invoking user, and identify the alliance. Eligibility requires a linked active
+membership in that server/alliance and the exact audience rank. Management/admin
+privilege grants no personal-feed or DM eligibility override. Discovery uses the
+persisted occurrences maintained by the existing worker; it does not run another
+historical backfill pass.
+
+Cards and player DMs retain explicit AT and additionally show Discord timestamps
+derived directly from canonical UTC-naive storage, rendering each viewer's local
+time. Exact audiences accept comma-separated ranks and offer autocomplete; `R3`
+continues to mean only R3. Single-rank member options retain native R1–R5 choices.
+
+There are **three independent reminder mechanisms**:
+
+- Existing 30/10-minute public channel reminders retain their existing settings,
+  eligibility, claims and behavior.
+- PR #9 missing-RSVP DMs retain their opt-in required/deadline/No Response policy,
+  fixed 60-minute window, one attempt and late-RSVP behavior.
+- Normal event DMs use the alliance's independently enabled 24-hour, 1-hour and
+  15-minute leads and the separate `player_reminders` ledger. Already responding,
+  including Not Going, does not suppress a normal event DM. Participation mode
+  does not determine normal-reminder eligibility.
+
+Only the latest enabled due normal-DM threshold is eligible after downtime; older
+enabled thresholds are persistently skipped. No DM starts at/after event start.
+Each occurrence/user **and** occurrence/membership has at most one attempt per
+lead. All stored statuses suppress retries, even after failures or restarts.
+Normal DM scans rotate through at most 100 eligible membership/occurrence pairs
+per cycle, including terminal attempts, so earlier rows cannot monopolize a batch.
+Discord user/private-channel lookup happens before final serialized authorization,
+which rechecks the current tenant, link, active state, exact audience, schedule,
+series state, policy and time window. Rank/state/link, audience, schedule, or DM
+policy changes revoke pending authority; changing away and back cannot revive it.
+Rescheduling retains terminal normal-DM opportunities rather than sending an
+already-attempted lead again. Weekly schedule replacements receive independent
+occurrence IDs. Text-only edits/no-ops preserve authority. RSVP/deadline changes
+do not alter normal-DM claims; normal-DM settings do not alter PR #9 claims.
+
+Normal and missing-RSVP DMs link to a registered card when available, preferring
+the configured alliance channel and then the oldest publication ID. Only complete
+persisted guild/channel/message bindings are used. Missing cards fall back to
+`/event rsvp event_id:<id>` for RSVP-enabled events. A remotely deleted message can
+remain linked until reconciliation observes Not Found; no speculative network
+lookup is added between final authorization and send.
+
+SQLite write transactions are short and never span Discord I/O. Independent
+processes share database uniqueness and final authority consumption. Publication
+reservations retain non-reused IDs and deletion SET NULL semantics: an old send
+cannot bind to a replacement event that reuses an integer ID. A request already
+authorized/in flight cannot be recalled; subsequent reconciliation corrects stale
+card content and backend checks reject stale buttons. No attendance is inferred.
+
+Migration `b36e50d147f2` follows `a25d49c036e1`. It adds two disabled alliance
+settings and the two independent delivery ledgers, preserving all existing
+history, policies, cards and reminder state. Stop old bot processes, back up the
+database, run `alembic upgrade head`, then restart. Downgrade refuses to discard
+new enabled settings or attempts. For an isolated live test, enable a single DM
+lead and use an exact audience containing only the intended active linked member;
+there are no hard-coded user or alliance identities.
+
 ## Technology
 
 - Python

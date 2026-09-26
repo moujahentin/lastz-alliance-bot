@@ -9,7 +9,8 @@ from discord.ext import tasks
 from sqlalchemy.exc import SQLAlchemyError
 
 from lastz_bot.database.session import SessionLocal
-from lastz_bot.event_time import utc_now_naive, utc_to_apocalypse_time
+from lastz_bot.event_time import utc_now_naive, utc_to_apocalypse_time, discord_timestamp
+from lastz_bot.player_reminders import PlayerReminderProcessor
 from lastz_bot.rsvp_reminders import RSVPReminderProcessor
 from lastz_bot.reminders import ReminderDelivery, ReminderProcessor, eligible_threshold
 
@@ -22,6 +23,7 @@ class ReminderWorker:
         self.client = client
         self.processor = ReminderProcessor(SessionLocal, self.send)
         self.rsvp_processor = RSVPReminderProcessor(SessionLocal, self.send_rsvp)
+        self.player_processor = PlayerReminderProcessor(SessionLocal, self.send_player)
 
     async def send(self, delivery: ReminderDelivery) -> None:
         delivery = self.processor.current_delivery(delivery)
@@ -67,8 +69,28 @@ class ReminderWorker:
             f"Your RSVP is still missing for **{name}** in **{alliance}**. "
             f"Event: `{starts:%Y-%m-%d %H:%M}` AT. "
             f"RSVP deadline: `{deadline:%Y-%m-%d %H:%M}` AT. "
-            f"Please respond using the server's event card buttons or "
-            f"`/event rsvp event_id:{delivery.event_id}`. This is RSVP intention, not attendance.",
+            f"Your local time: {discord_timestamp(delivery.starts_at)}. "
+            f"Please respond using the server's event card buttons or {delivery.navigation}. "
+            f"This is RSVP intention, not attendance.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    async def send_player(self, delivery):
+        user = self.client.get_user(delivery.discord_user_id)
+        if user is None:
+            user = await self.client.fetch_user(delivery.discord_user_id)
+        if user.id != delivery.discord_user_id:
+            raise RuntimeError("Player reminder recipient mismatch")
+        channel = await user.create_dm()
+        delivery = self.player_processor.authorize_delivery(delivery)
+        if delivery is None:
+            raise RuntimeError("Player reminder is no longer authorized")
+        name = discord.utils.escape_markdown(delivery.event_name)[:200]
+        alliance = discord.utils.escape_markdown(delivery.alliance_name)[:200]
+        starts = utc_to_apocalypse_time(delivery.starts_at)
+        await channel.send(
+            f"Event reminder: **{name}** in **{alliance}** starts at {starts:%Y-%m-%d %H:%M} AT. "
+            f"Your local time: {discord_timestamp(delivery.starts_at)}. {delivery.navigation}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -77,6 +99,7 @@ class ReminderWorker:
         try:
             await self.processor.process_pending()
             await self.rsvp_processor.process_pending()
+            await self.player_processor.process_pending()
         except SQLAlchemyError:
             # A transient database failure must not permanently stop the loop.
             # Any previously committed claim remains ineligible on the next poll.

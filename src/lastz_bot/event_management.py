@@ -110,6 +110,9 @@ def edit_event(
         if (policy_changed or rescheduled or (participation is not None and participation != event.participation)
                 or (new_audience is not None and new_audience != event.audience)):
             invalidate_missing_claims(session, [event.id])
+        if rescheduled or (new_audience is not None and new_audience != event.audience):
+            from lastz_bot.player_policy import invalidate_player_claims
+            invalidate_player_claims(session, [event.id])
         event.rsvp_deadline, event.missing_reminder = target_deadline, target_reminder
         if new_audience is not None and new_audience != event.audience:
             if event.starts_at <= utc_now_naive() or event.status != "scheduled":

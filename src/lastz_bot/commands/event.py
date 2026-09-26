@@ -444,4 +444,36 @@ def setup_event_commands(
             return
         await interaction.followup.send(f"✅ Event card published: {message.jump_url}", ephemeral=True)
 
+    async def personal(interaction, mode):
+        from lastz_bot.player_events import personal_events, discovery_text
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this command inside a Discord server.", ephemeral=True)
+            return
+        rows, more = personal_events(SessionLocal, interaction.guild.id, interaction.user.id, utc_now_naive(), mode)
+        await interaction.response.send_message(discovery_text(rows, more), ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @event_group.command(name="mine", description="Your upcoming events matching current active membership and exact audience.")
+    async def mine(interaction: discord.Interaction):
+        await personal(interaction, "mine")
+
+    @event_group.command(name="next", description="Your next eligible upcoming event.")
+    async def next_event(interaction: discord.Interaction):
+        await personal(interaction, "next")
+
+    @event_group.command(name="today", description="Your upcoming events on today's Apocalypse Time calendar day.")
+    async def today(interaction: discord.Interaction):
+        await personal(interaction, "today")
+
+    async def audience_suggestions(interaction: discord.Interaction, current: str):
+        from lastz_bot.audiences import audience_label
+        choices = [("Everyone", "Everyone")] + [(audience_label(mask), audience_label(mask).replace(" ", ""))
+                                                for mask in range(1, 31)]
+        needle = current.upper().replace(" ", "").replace("+", ",")
+        return [app_commands.Choice(name=label, value=value) for label, value in choices
+                if needle in value.upper()][:25]
+
+    for command in (create, edit, edit_weekly):
+        command.autocomplete("audience")(audience_suggestions)
+
     tree.add_command(event_group)
