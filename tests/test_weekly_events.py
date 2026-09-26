@@ -1,3 +1,4 @@
+from interaction_fakes import transport
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -98,14 +99,14 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             guild=SimpleNamespace(id=guild) if guild is not None else None,
             user=SimpleNamespace(id=actor, guild_permissions=SimpleNamespace(administrator=admin)),
-            response=SimpleNamespace(send_message=AsyncMock()),
+            **transport(),
         )
 
     async def test_create_defaults_to_once_and_explicit_once(self):
         for extra in ({}, {"recurrence": "once"}):
             interaction = self.interaction()
             await self.commands["create"](interaction, "Alpha", "Once", "2026-09-22 17:00", **extra)
-            self.assertIn("Event `Once` created", interaction.response.send_message.call_args.args[0])
+            self.assertIn("Event `Once` created", interaction.followup.send.call_args.args[0])
         self.assertIs(Event, EventOccurrence)
         self.assertEqual(len(self.rows()), 2)
         self.assertTrue(all(e.series_id is None and e.starts_at == self.start for e in self.rows()))
@@ -120,14 +121,14 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.status, "scheduled")
         with self.sessions() as session:
             self.assertEqual(session.get(WeeklySchedule, row.schedule_id).anchor_at, row.nominal_at)
-        self.assertIn(f"Weekly series `{row.series_id}`", interaction.response.send_message.call_args.args[0])
+        self.assertIn(f"Weekly series `{row.series_id}`", interaction.followup.send.call_args.args[0])
 
     async def test_command_past_weekly_anchor_still_backfills_in_batches(self):
         interaction = self.interaction()
         first_start = self.start - 121 * WEEK
         first_at = (first_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M")
         await self.commands["create"](interaction, "Alpha", "History", first_at, recurrence="weekly")
-        self.assertIn("Weekly series", interaction.response.send_message.call_args.args[0])
+        self.assertIn("Weekly series", interaction.followup.send.call_args.args[0])
         self.assertEqual(len(self.rows()), 51)
         self.assertEqual(self.rows()[0].starts_at, first_start)
         self.assertEqual(ensure_occurrences(self.sessions, self.now), 50)
@@ -146,7 +147,7 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
         await self.commands["create"](interaction, "Alpha", "Earlier", "2026-09-22 16:45")
         listing = self.interaction()
         await self.commands["list"](listing, "Alpha")
-        message = listing.response.send_message.call_args.args[0]
+        message = listing.followup.send.call_args.args[0]
         self.assertEqual(message.count("Weekly"), 1)
         self.assertIn(f"Series ID `{first}`", message)
         self.assertIn(f"Occurrence ID `{self.rows(first)[0].id}`", message)
@@ -532,20 +533,20 @@ class WeeklyTests(unittest.IsolatedAsyncioTestCase):
         series = self.create()
         interaction = self.interaction()
         await self.commands["edit-series"](interaction, series, name="Changed", weekday="Sunday", time_at="23:30")
-        self.assertIn("updated", interaction.response.send_message.call_args.args[0])
+        self.assertIn("updated", interaction.followup.send.call_args.args[0])
         interaction = self.interaction()
         await self.commands["stop-series"](interaction, series)
-        self.assertIn("history is preserved", interaction.response.send_message.call_args.args[0])
+        self.assertIn("history is preserved", interaction.followup.send.call_args.args[0])
         for command, kwargs in [("edit-series", {"name": "No"}), ("stop-series", {})]:
             interaction = self.interaction(guild=None)
             await self.commands[command](interaction, series, **kwargs)
-            self.assertIn("inside a Discord server", interaction.response.send_message.call_args.args[0])
+            self.assertIn("inside a Discord server", interaction.followup.send.call_args.args[0])
 
     async def test_weekly_create_permission_denials_and_admin_override(self):
         for actor in (30, 40, 50, 999):
             interaction = self.interaction(actor=actor)
             await self.commands["create"](interaction, "Alpha", "No", "2026-09-22 17:00", recurrence="weekly")
-            self.assertIn("need to be an R4", interaction.response.send_message.call_args.args[0])
+            self.assertIn("need to be an R4", interaction.followup.send.call_args.args[0])
         self.assertEqual(self.rows(), [])
         interaction = self.interaction(actor=999, admin=True)
         await self.commands["create"](interaction, "Alpha", "Allowed", "2026-09-22 17:00", recurrence="weekly")

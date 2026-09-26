@@ -1,4 +1,6 @@
 """Alliance-scoped membership lifecycle; no Discord I/O inside transactions."""
+from dataclasses import dataclass
+from datetime import datetime
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
@@ -63,7 +65,8 @@ def add_member(sessions, guild_id, alliance_name, actor_id, administrator, *, ga
 
 
 def change_member(sessions, guild_id, alliance_name, actor_id, administrator, *,
-                  discord_user_id=None, game_name=None, rank=None, active=None, link_to=None):
+                  discord_user_id=None, game_name=None, rank=None, active=None, link_to=None,
+                  expected=None):
     if rank is not None and rank not in RANK_LEVELS:
         raise EventManagementError("❌ Rank must be R1, R2, R3, R4, or R5.")
     if (discord_user_id is None) == (game_name is None):
@@ -78,6 +81,8 @@ def change_member(sessions, guild_id, alliance_name, actor_id, administrator, *,
             if member is None:
                 raise EventManagementError("❌ Membership not found in this alliance.")
             _authorize(session, guild_id, alliance, actor_id, administrator, member.rank, rank or member.rank)
+            if expected is not None and membership_snapshot(alliance, member) != expected:
+                raise EventManagementError("❌ Membership changed while this panel was open. Open a fresh management panel.")
             previous = (member.rank, member.active, member.discord_user_id)
             if rank is not None:
                 member.rank = rank
@@ -99,3 +104,44 @@ def list_members(sessions, guild_id, alliance_name):
         session.execute(text("BEGIN"))
         alliance = _alliance(session, guild_id, alliance_name)
         return session.scalars(select(Member).where(Member.alliance_id == alliance.id).order_by(Member.game_name)).all()
+
+
+@dataclass(frozen=True)
+class LinkedMembership:
+    guild_id: int
+    alliance_id: int
+    alliance: str
+    member_id: int
+    game_name: str
+    discord_user_id: int
+    rank: str
+    active: bool
+    created_at: datetime
+
+
+def membership_snapshot(alliance, member):
+    return LinkedMembership(alliance.guild_id, alliance.id, alliance.name, member.id,
+                            member.game_name, member.discord_user_id, member.rank,
+                            member.active, member.created_at)
+
+
+def linked_memberships(sessions, guild_id, target_id, *, actor_id=None, administrator=False):
+    """Same guild-local read visibility as /member list; optional management filter.
+
+    UI snapshots carry identity and state, never authorization. Mutations reauthorize
+    and compare the snapshot under change_member's serialized write transaction.
+    """
+    with sessions() as session:
+        session.execute(text("BEGIN"))
+        rows = session.execute(select(Alliance, Member).join(Member).where(
+            Alliance.guild_id == guild_id, Member.discord_user_id == target_id,
+        ).order_by(Alliance.name, Alliance.id, Member.id)).all()
+        result = []
+        for alliance, member in rows:
+            if actor_id is not None:
+                try:
+                    _authorize(session, guild_id, alliance, actor_id, administrator, member.rank)
+                except EventManagementError:
+                    continue
+            result.append(membership_snapshot(alliance, member))
+        return result

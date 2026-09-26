@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from sqlalchemy import select, text
 
+from lastz_bot.interactions import private_command, respond
 from lastz_bot.database.models import Alliance, Event, Guild, EventAudienceChange
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.event_management import EventManagementError, delete_event, edit_event, validate_one_time_start, validate_participation
@@ -38,6 +39,7 @@ def setup_event_commands(
         deadline_minutes="Weekly: minutes before each occurrence; omit for no deadline.",
         missing_reminder="Opt in to one missing-RSVP DM per eligible member, 60 minutes before deadline.",
     )
+    @private_command
     async def create(
         interaction: discord.Interaction,
         alliance: str,
@@ -52,7 +54,7 @@ def setup_event_commands(
         missing_reminder: bool = False,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
@@ -63,14 +65,14 @@ def setup_event_commands(
         event_description = description.strip() if description else None
 
         if not alliance_name:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Alliance name cannot be empty.",
                 ephemeral=True,
             )
             return
 
         if not event_name:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Event name cannot be empty.",
                 ephemeral=True,
             )
@@ -79,7 +81,7 @@ def setup_event_commands(
         try:
             event_starts_at = parse_apocalypse_time(starts_at)
         except ValueError:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Start time must use format `YYYY-MM-DD HH:MM`.",
                 ephemeral=True,
             )
@@ -139,17 +141,17 @@ def setup_event_commands(
                         new_audience=audience_mask, actor_id=interaction.user.id, changed_at=utc_now_naive()))
                 session.commit()
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
 
         apocalypse_starts_at = utc_to_apocalypse_time(event_starts_at)
         if recurrence == "weekly":
-            await interaction.response.send_message(
+            await respond(interaction,
                 f"✅ Weekly series `{series_id}` (`{event_name}`) created for alliance `{alliance_name}` "
                 f"from `{apocalypse_starts_at:%Y-%m-%d %H:%M}` Apocalypse Time.", ephemeral=True,
             )
             return
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ Event `{event_name}` created for alliance `{alliance_name}` "
             f"at `{apocalypse_starts_at:%Y-%m-%d %H:%M}` Apocalypse Time.",
             ephemeral=True,
@@ -159,12 +161,13 @@ def setup_event_commands(
         name="list",
         description="List upcoming events for an alliance.",
     )
+    @private_command
     async def list_events(
         interaction: discord.Interaction,
         alliance: str,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
@@ -173,7 +176,7 @@ def setup_event_commands(
         alliance_name = alliance.strip()
 
         if not alliance_name:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Alliance name cannot be empty.",
                 ephemeral=True,
             )
@@ -183,7 +186,7 @@ def setup_event_commands(
             guild = session.get(Guild, interaction.guild.id)
 
             if guild is None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     "❌ This Discord server has not been initialized yet. Run `/setup` first.",
                     ephemeral=True,
                 )
@@ -197,7 +200,7 @@ def setup_event_commands(
             )
 
             if alliance_record is None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     f"❌ Alliance `{alliance_name}` does not exist.",
                     ephemeral=True,
                 )
@@ -223,7 +226,7 @@ def setup_event_commands(
             ).all()
 
         if not events:
-            await interaction.response.send_message(
+            await respond(interaction,
                 f"ℹ️ No upcoming events for alliance `{alliance_name}`.",
                 ephemeral=True,
             )
@@ -256,7 +259,7 @@ def setup_event_commands(
                 line += f" — RSVP deadline: {deadline:%Y-%m-%d %H:%M} AT"
             event_lines.append(line)
 
-        await interaction.response.send_message(
+        await respond(interaction,
             f"**Upcoming events for `{alliance_name}`:**\n"
             + "\n".join(event_lines),
             ephemeral=True,
@@ -272,6 +275,7 @@ def setup_event_commands(
         rsvp_deadline="YYYY-MM-DD HH:MM AT, or none to clear; omit to keep it.",
         missing_reminder="Enable/disable missing-RSVP DMs; disable when clearing the deadline.",
     )
+    @private_command
     async def edit(
         interaction: discord.Interaction,
         event_id: app_commands.Range[int, 1],
@@ -284,7 +288,7 @@ def setup_event_commands(
         missing_reminder: bool | None = None,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
@@ -297,10 +301,10 @@ def setup_event_commands(
                 rsvp_deadline=rsvp_deadline, missing_reminder=missing_reminder,
             )
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
         apocalypse_starts_at = utc_to_apocalypse_time(result.starts_at)
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ Event `{event_id}` updated. "
             f"Starts at `{apocalypse_starts_at:%Y-%m-%d %H:%M}` Apocalypse Time.",
             ephemeral=True,
@@ -308,12 +312,13 @@ def setup_event_commands(
 
     @event_group.command(name="delete", description="Delete an alliance event by ID.")
     @app_commands.describe(event_id="Event ID shown by /event list.")
+    @private_command
     async def delete(
         interaction: discord.Interaction,
         event_id: app_commands.Range[int, 1],
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
@@ -324,9 +329,9 @@ def setup_event_commands(
                 interaction.user.guild_permissions.administrator,
             )
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
-        await interaction.response.send_message(f"✅ Event `{event_id}` deleted.", ephemeral=True)
+        await respond(interaction, f"✅ Event `{event_id}` deleted.", ephemeral=True)
 
     @event_group.command(name="edit-series", description="Edit a whole weekly event series.")
     @app_commands.describe(
@@ -335,6 +340,7 @@ def setup_event_commands(
         deadline_minutes="Minutes before each occurrence, 0 to clear; omit to keep it.",
         missing_reminder="Enable/disable missing-RSVP DMs; disable when clearing the deadline.",
     )
+    @private_command
     async def edit_weekly(
         interaction: discord.Interaction,
         series_id: app_commands.Range[int, 1],
@@ -348,7 +354,7 @@ def setup_event_commands(
         missing_reminder: bool | None = None,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
@@ -360,14 +366,15 @@ def setup_event_commands(
                         participation=participation, audience=audience,
                         deadline_minutes=deadline_minutes, missing_reminder=missing_reminder)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
-        await interaction.response.send_message(f"✅ Weekly series `{series_id}` updated.", ephemeral=True)
+        await respond(interaction, f"✅ Weekly series `{series_id}` updated.", ephemeral=True)
 
     @event_group.command(name="stop-series", description="Stop a weekly series while preserving history.")
+    @private_command
     async def stop_weekly(interaction: discord.Interaction, series_id: app_commands.Range[int, 1]) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
@@ -375,29 +382,30 @@ def setup_event_commands(
             stop_series(SessionLocal, interaction.guild.id, series_id, interaction.user.id,
                         interaction.user.guild_permissions.administrator)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ Weekly series `{series_id}` stopped. Occurrence history is preserved.", ephemeral=True,
         )
 
     @event_group.command(name="rsvp", description="Set your RSVP for a concrete event occurrence.")
+    @private_command
     async def rsvp(
         interaction: discord.Interaction,
         event_id: app_commands.Range[int, 1],
         response: Literal["going", "not_going", "maybe"],
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
         try:
             set_rsvp(SessionLocal, interaction.guild.id, event_id, interaction.user.id, response)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ RSVP for occurrence `{event_id}` set to `{response}`.", ephemeral=True,
         )
         cards = getattr(getattr(interaction, "client", None), "event_cards", None)
@@ -405,9 +413,10 @@ def setup_event_commands(
             await cards.refresh(event_id=event_id)
 
     @event_group.command(name="rsvps", description="View an alliance occurrence's RSVP summary.")
+    @private_command
     async def rsvps(interaction: discord.Interaction, event_id: app_commands.Range[int, 1]) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
@@ -415,18 +424,18 @@ def setup_event_commands(
             result = get_rsvps(SessionLocal, interaction.guild.id, event_id, interaction.user.id,
                                interaction.user.guild_permissions.administrator)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
         pages = summary_pages(result)
-        await interaction.response.send_message(pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await respond(interaction, pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         for page in pages[1:]:
-            await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            await respond(interaction, page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     async def readiness_report(interaction, event_id, page, only_no_response):
         from lastz_bot.readiness import get_readiness
         from lastz_bot.readiness_output import readiness_page
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
@@ -435,60 +444,65 @@ def setup_event_commands(
                                    interaction.user.guild_permissions.administrator)
             content = readiness_page(result, page, only_no_response=only_no_response)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
-        await interaction.response.send_message(content, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await respond(interaction, content, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @event_group.command(name="roster", description="Officer view of current eligible members and their RSVP intentions.")
+    @private_command
     async def roster(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
                      page: app_commands.Range[int, 1] = 1):
         await readiness_report(interaction, event_id, page, False)
 
     @event_group.command(name="no-response", description="Officer view of currently eligible members without an RSVP.")
+    @private_command
     async def no_response(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
                           page: app_commands.Range[int, 1] = 1):
         await readiness_report(interaction, event_id, page, True)
 
     @event_group.command(name="publish", description="Publish a concrete alliance event card to a text channel.")
+    @private_command
     async def publish(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
                       channel: discord.TextChannel) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.", ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True)
         try:
             message = await interaction.client.event_cards.publish(
                 interaction.guild, channel, event_id, interaction.user.id,
                 interaction.user.guild_permissions.administrator,
             )
         except EventManagementError as error:
-            await interaction.followup.send(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
         except discord.HTTPException:
-            await interaction.followup.send("❌ Discord could not publish the event card.", ephemeral=True)
+            await respond(interaction, "❌ Discord could not publish the event card.", ephemeral=True)
             return
-        await interaction.followup.send(f"✅ Event card published: {message.jump_url}", ephemeral=True)
+        await respond(interaction, f"✅ Event card published: {message.jump_url}", ephemeral=True)
 
     async def personal(interaction, mode):
         from lastz_bot.player_events import personal_events, discovery_text
         if interaction.guild is None:
-            await interaction.response.send_message("Use this command inside a Discord server.", ephemeral=True)
+            await respond(interaction, "Use this command inside a Discord server.", ephemeral=True)
             return
         rows, more = personal_events(SessionLocal, interaction.guild.id, interaction.user.id, utc_now_naive(), mode)
-        await interaction.response.send_message(discovery_text(rows, more), ephemeral=True,
+        await respond(interaction, discovery_text(rows, more), ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
     @event_group.command(name="mine", description="Your upcoming events matching current active membership and exact audience.")
+    @private_command
     async def mine(interaction: discord.Interaction):
         await personal(interaction, "mine")
 
     @event_group.command(name="next", description="Your next eligible upcoming event.")
+    @private_command
     async def next_event(interaction: discord.Interaction):
         await personal(interaction, "next")
 
     @event_group.command(name="today", description="Your upcoming events on today's Apocalypse Time calendar day.")
+    @private_command
     async def today(interaction: discord.Interaction):
         await personal(interaction, "today")
 

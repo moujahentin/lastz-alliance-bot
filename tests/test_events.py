@@ -1,3 +1,4 @@
+from interaction_fakes import transport
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 import unittest
@@ -71,11 +72,11 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
             user=SimpleNamespace(
                 id=user_id, guild_permissions=SimpleNamespace(administrator=admin),
             ),
-            response=SimpleNamespace(send_message=AsyncMock()),
+            **transport(),
         )
 
     def assert_response(self, interaction, message):
-        interaction.response.send_message.assert_awaited_once_with(message, ephemeral=True)
+        interaction.followup.send.assert_awaited_once_with(message, ephemeral=True)
 
     def stored_events(self):
         with self.sessions() as session:
@@ -258,7 +259,7 @@ class EventCommandTests(unittest.IsolatedAsyncioTestCase):
         for kwargs in ({"name": "Renamed"}, {"description": "New"}, {"starts_at": "2026-09-25 17:00"}):
             interaction = self.interaction()
             await self.edit(interaction, event_id, **kwargs)
-            self.assertIn("updated", interaction.response.send_message.call_args.args[0])
+            self.assertIn("updated", interaction.followup.send.call_args.args[0])
             self.assertEqual(self.reminder_snapshot(), before)
         self.assertEqual(self.stored_events()[0].starts_at, datetime(2026, 9, 25, 19))
 

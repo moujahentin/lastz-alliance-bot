@@ -64,7 +64,7 @@ class ParticipationTests(unittest.IsolatedAsyncioTestCase):
             options = {} if mode is None else {"participation": mode}
             interaction = self.interaction()
             await self.commands["create"](interaction, "Alpha", str(mode), "2026-09-22 17:00", **options)
-            self.assertIn("created", interaction.response.send_message.call_args.args[0])
+            self.assertIn("created", interaction.followup.send.call_args.args[0])
         self.assertEqual([row.participation for row in self.rows()], ["none", "none", "optional", "required"])
 
     async def test_list_shows_enabled_modes_without_none_clutter(self):
@@ -72,7 +72,7 @@ class ParticipationTests(unittest.IsolatedAsyncioTestCase):
             self.once(mode)
         interaction = self.interaction()
         await self.commands["list"](interaction, "Alpha")
-        message = interaction.response.send_message.call_args.args[0]
+        message = interaction.followup.send.call_args.args[0]
         self.assertEqual(message.count("RSVP:"), 2)
         self.assertIn("RSVP: optional", message)
         self.assertIn("RSVP: required", message)
@@ -266,7 +266,7 @@ class ParticipationTests(unittest.IsolatedAsyncioTestCase):
         occurrence = self.once()
         interaction = self.interaction(actor=999, admin=True)
         await self.commands["rsvp"](interaction, occurrence, "going")
-        self.assertIn("not a linked member", interaction.response.send_message.call_args.args[0])
+        self.assertIn("not a linked member", interaction.followup.send.call_args.args[0])
         self.assertEqual(self.snapshot(), [])
 
     def test_membership_removed_blocks_updates_without_deleting_intention(self):
@@ -409,7 +409,7 @@ class ParticipationTests(unittest.IsolatedAsyncioTestCase):
         occurrence = self.once("none")
         interaction = self.interaction()
         await self.commands["edit"](interaction, occurrence, participation="optional")
-        self.assertIn("updated", interaction.response.send_message.call_args.args[0])
+        self.assertIn("updated", interaction.followup.send.call_args.args[0])
         self.assertEqual(self.rows()[0].participation, "optional")
         series = self.series()
         interaction = self.interaction()
@@ -432,17 +432,17 @@ class ParticipationTests(unittest.IsolatedAsyncioTestCase):
         occurrence = self.once()
         interaction = self.interaction(actor=30)
         await self.commands["rsvp"](interaction, occurrence, "going")
-        self.assertTrue(interaction.response.send_message.call_args.kwargs["ephemeral"])
+        self.assertTrue(interaction.followup.send.call_args.kwargs["ephemeral"])
         interaction = self.interaction()
         await self.commands["rsvps"](interaction, occurrence)
-        call = interaction.response.send_message.call_args
+        call = interaction.followup.send.call_args
         self.assertTrue(call.kwargs["ephemeral"])
         self.assertFalse(call.kwargs["allowed_mentions"].everyone)
         self.assertIn("Going (1)", call.args[0])
         for command, extra in (("rsvp", ("going",)), ("rsvps", ())):
             interaction = self.interaction(guild=None)
             await self.commands[command](interaction, occurrence, *extra)
-            self.assertIn("inside a Discord server", interaction.response.send_message.call_args.args[0])
+            self.assertIn("inside a Discord server", interaction.followup.send.call_args.args[0])
 
     def test_invalid_values_rejected_without_writes(self):
         occurrence = self.once()

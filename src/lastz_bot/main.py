@@ -5,6 +5,7 @@ from lastz_bot.commands.alliance import setup_alliance_commands
 from lastz_bot.commands.event import setup_event_commands
 from lastz_bot.commands.general import setup_general_commands
 from lastz_bot.commands.member import setup_member_commands
+from lastz_bot.commands.member_context import setup_member_context_commands
 from lastz_bot.commands.setup import setup_setup_commands
 from lastz_bot.config import load_settings
 from lastz_bot.reminder_worker import ReminderWorker
@@ -21,6 +22,7 @@ class LastZBot(discord.Client):
         setup_event_commands(self.tree)
         setup_general_commands(self.tree, self)
         setup_member_commands(self.tree)
+        setup_member_context_commands(self.tree)
         setup_setup_commands(self.tree)
         self.reminder_worker = ReminderWorker(self)
         self.event_cards = EventCards(self)

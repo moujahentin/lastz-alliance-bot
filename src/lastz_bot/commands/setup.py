@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 
+from lastz_bot.interactions import private_command, respond
 from lastz_bot.database.models import Guild
 from lastz_bot.database.session import SessionLocal
 
@@ -12,16 +13,17 @@ def setup_setup_commands(
         name="setup",
         description="Initialize this Discord server for Last Z Alliance Assistant.",
     )
+    @private_command
     async def setup(interaction: discord.Interaction) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
             return
 
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ You need the Administrator permission to use this command.",
                 ephemeral=True,
             )
@@ -39,13 +41,13 @@ def setup_setup_commands(
                 session.add(guild)
                 session.commit()
 
-                await interaction.response.send_message(
+                await respond(interaction,
                     "✅ This Discord server has been initialized.",
                     ephemeral=True,
                 )
                 return
 
-            await interaction.response.send_message(
+            await respond(interaction,
                 "ℹ️ This Discord server is already initialized.",
                 ephemeral=True,
             )
