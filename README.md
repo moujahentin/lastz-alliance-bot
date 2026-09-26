@@ -569,6 +569,63 @@ new enabled settings or attempts. For an isolated live test, enable a single DM
 lead and use an exact audience containing only the intended active linked member;
 there are no hard-coded user or alliance identities.
 
+### Officer event readiness and roster
+
+`/event roster event_id:<occurrence-id> page:1` shows Going, Maybe, Not Going,
+and No Response for **currently eligible** alliance members. `/event no-response`
+uses the same calculation but lists only members without a response. Both show
+Eligible, Responded, No Response, and `Responded / Eligible * 100`, rounded to
+one decimal place. Zero eligible members deterministically shows `0/0 (0.0%)`.
+Going, Maybe and Not Going all count as responded; eligible always equals
+responded plus no-response.
+
+These detailed views are private/ephemeral. Only the occurrence's alliance's
+active R4/R5 members or administrators of its Discord server can read them,
+using the existing event-management authorization. An officer need not be in
+the event audience to manage its roster. Ordinary members, inactive officers,
+unlinked users without administrative override, and officers of another alliance
+cannot read it. Event IDs from other servers never grant access, even to an
+administrator of the invoking server.
+
+Eligibility uses the shared current active-membership and exact-audience filter.
+Eligible unlinked members count in the denominator and are shown as `unlinked`;
+linked members show their game name and Discord mention without sending pings.
+RSVPs match the membership's **current Discord link**, consistently with PR #9.
+Relinking does not transfer an intention stored under the old account. An
+unlinked eligible membership has no matching RSVP and appears under No Response.
+Stored responses from currently ineligible members do not inflate readiness
+counts, but remain available in the existing retained-intention `/event rsvps`
+report. Neither report deletes or rewrites responses.
+
+Roster reporting works for all participation modes. For optional/none, No Response
+means a missing record, not an obligation to respond. Disabled participation is
+labelled and retained intentions are still counted if their members are currently
+eligible. Existing required-event No Response counts and missing-RSVP reminder
+rules are unchanged. A passed deadline does not alter this calculation.
+
+Only concrete occurrence IDs are accepted; series IDs are never interpreted as
+series-wide reports. One-time and generated weekly occurrences are supported.
+Like `/event rsvps`, reporting remains available after expiry, cancellation or
+series stop, using current eligibility rather than a historical verdict. Deleted
+or inaccessible occurrences return the existing non-disclosing access error.
+Viewing a roster never generates occurrences or resurrects schedule history.
+
+Each invocation returns exactly one bounded text page. Categories have a fixed
+order; members sort by game name then membership ID. Long names are clipped for
+display, whitespace/Markdown are handled safely, and limits account for Unicode
+UTF-16 length. Use the command's `page` option to request another page. Every
+request rechecks authorization and recomputes the entire read-only snapshot;
+there are no persistent pagination records, cached membership lists, navigation
+buttons, or bulk follow-up messages. Changes can move members between pages, so
+separate page requests are not a frozen export. Invalid pages return a private
+page-range error only after authorization.
+
+Authorization, occurrence policy, memberships and RSVPs are read in one database
+snapshot without a write lock or Discord lookups. No schema changes or migration
+are needed; Alembic head remains `b36e50d147f2`. **RSVP is intention, not attendance
+or reconfirmation after a schedule change.** This feature adds no reminders,
+assignments, selection, penalties, or attendance tracking.
+
 ## Technology
 
 - Python

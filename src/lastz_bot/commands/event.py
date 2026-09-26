@@ -422,6 +422,33 @@ def setup_event_commands(
         for page in pages[1:]:
             await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
+    async def readiness_report(interaction, event_id, page, only_no_response):
+        from lastz_bot.readiness import get_readiness
+        from lastz_bot.readiness_output import readiness_page
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used inside a Discord server.", ephemeral=True,
+            )
+            return
+        try:
+            result = get_readiness(SessionLocal, interaction.guild.id, event_id, interaction.user.id,
+                                   interaction.user.guild_permissions.administrator)
+            content = readiness_page(result, page, only_no_response=only_no_response)
+        except EventManagementError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_message(content, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @event_group.command(name="roster", description="Officer view of current eligible members and their RSVP intentions.")
+    async def roster(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
+                     page: app_commands.Range[int, 1] = 1):
+        await readiness_report(interaction, event_id, page, False)
+
+    @event_group.command(name="no-response", description="Officer view of currently eligible members without an RSVP.")
+    async def no_response(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
+                          page: app_commands.Range[int, 1] = 1):
+        await readiness_report(interaction, event_id, page, True)
+
     @event_group.command(name="publish", description="Publish a concrete alliance event card to a text channel.")
     async def publish(interaction: discord.Interaction, event_id: app_commands.Range[int, 1],
                       channel: discord.TextChannel) -> None:

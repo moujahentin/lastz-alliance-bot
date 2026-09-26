@@ -2,19 +2,19 @@
 from datetime import timedelta, timezone
 
 import discord
-from sqlalchemy import case, select
+from sqlalchemy import select
 
 from lastz_bot.database.models import Alliance, Event, EventPublication, Member
 from lastz_bot.event_time import discord_timestamp, utc_to_apocalypse_time
 from lastz_bot.reminders import active_occurrence
+from lastz_bot.eligibility import eligible_membership
 
 
 def eligible_events():
-    rank_bit = case(*[(Member.rank == f"R{i+1}", 1 << i) for i in range(5)], else_=0)
     return select(Event, Alliance, Member).join(Alliance, Event.alliance_id == Alliance.id).join(
         Member, Member.alliance_id == Alliance.id,
-    ).where(Member.active.is_(True), Member.discord_user_id.is_not(None),
-            Event.audience.op("&")(rank_bit) != 0, active_occurrence())
+    ).where(eligible_membership(Event.alliance_id, Event.audience),
+            Member.discord_user_id.is_not(None), active_occurrence())
 
 
 def personal_events(sessions, guild_id, user_id, now, mode="mine", limit=5):
