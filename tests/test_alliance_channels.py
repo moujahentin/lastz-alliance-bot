@@ -1,3 +1,4 @@
+from interaction_fakes import transport
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -40,7 +41,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             guild=SimpleNamespace(id=guild, me=Mock()) if guild is not None else None,
             user=SimpleNamespace(id=user, guild_permissions=SimpleNamespace(administrator=admin)),
-            response=SimpleNamespace(send_message=AsyncMock()),
+            **transport(),
         )
 
     def channel(self, channel_id=101, guild=1, view=True, send=True):
@@ -58,7 +59,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(user=user):
                 interaction = self.interaction(user=user, admin=admin)
                 await self.command(interaction, " Alpha ", self.channel(channel_id))
-                interaction.response.send_message.assert_awaited_once_with(
+                interaction.followup.send.assert_awaited_once_with(
                     f"✅ Event reminders for alliance `Alpha` will be sent to <#{channel_id}>.", ephemeral=True,
                 )
                 self.assertEqual(self.configuration(), {1: channel_id, 2: None, 3: None})
@@ -68,7 +69,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(user=user, guild=guild, alliance=alliance):
                 interaction = self.interaction(user=user, guild=guild)
                 await self.command(interaction, alliance, self.channel(guild=guild))
-                interaction.response.send_message.assert_awaited_once_with(
+                interaction.followup.send.assert_awaited_once_with(
                     "❌ You need to be an R4, R5, or Server Administrator of this alliance to configure event reminders.",
                     ephemeral=True,
                 )
@@ -82,7 +83,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
     async def test_cross_guild_channel_is_rejected_even_for_admin(self):
         interaction = self.interaction(admin=True)
         await self.command(interaction, "Alpha", self.channel(201, guild=2))
-        interaction.response.send_message.assert_awaited_once_with(
+        interaction.followup.send.assert_awaited_once_with(
             "❌ Choose a channel in this Discord server.", ephemeral=True,
         )
         self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
@@ -91,7 +92,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
         for view, send in ((False, True), (True, False)):
             interaction = self.interaction()
             await self.command(interaction, "Alpha", self.channel(view=view, send=send))
-            interaction.response.send_message.assert_awaited_once_with(
+            interaction.followup.send.assert_awaited_once_with(
                 "❌ I need View Channel and Send Messages permissions in that channel.", ephemeral=True,
             )
         self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
@@ -106,7 +107,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(guild=guild, alliance=alliance):
                 interaction = self.interaction(guild=guild, admin=True)
                 await self.command(interaction, alliance, self.channel(guild=guild))
-                interaction.response.send_message.assert_awaited_once_with(expected, ephemeral=True)
+                interaction.followup.send.assert_awaited_once_with(expected, ephemeral=True)
         self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
 
 
@@ -121,7 +122,7 @@ class AllianceChannelTests(unittest.IsolatedAsyncioTestCase):
         channel.permissions_for.side_effect = deactivate_during_permission_check
         interaction = self.interaction()
         await self.command(interaction, 'Alpha', channel)
-        self.assertIn('no longer', interaction.response.send_message.call_args.args[0])
+        self.assertIn('no longer', interaction.followup.send.call_args.args[0])
         self.assertEqual(self.configuration(), {1: None, 2: None, 3: None})
         await self.command(self.interaction(admin=True), 'Alpha', self.channel())
         self.assertEqual(self.configuration(), {1: 101, 2: None, 3: None})

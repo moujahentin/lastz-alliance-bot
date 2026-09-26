@@ -1,3 +1,4 @@
+from interaction_fakes import transport
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -71,8 +72,7 @@ class EventCardTests(unittest.IsolatedAsyncioTestCase):
 
     def press(self, message, actor=30, guild=1, channel=None):
         return SimpleNamespace(
-            response=SimpleNamespace(defer=AsyncMock()),
-            followup=SimpleNamespace(send=AsyncMock()),
+            **transport(),
             guild=SimpleNamespace(id=guild) if guild is not None else None,
             message=message, channel_id=channel or message.channel.id,
             user=SimpleNamespace(id=actor),
@@ -469,7 +469,7 @@ class EventCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fields(message)["Going"], "1")
         manager = self.interaction()
         await self.commands["rsvps"](manager, occurrence)
-        self.assertIn("Going (1)", manager.response.send_message.call_args.args[0])
+        self.assertIn("Going (1)", manager.followup.send.call_args.args[0])
 
     async def test_publish_command_is_explicit_and_ephemeral(self):
         occurrence = self.once()

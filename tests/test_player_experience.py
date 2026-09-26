@@ -380,14 +380,14 @@ class PlayerExperienceTests(unittest.IsolatedAsyncioTestCase):
         for mode, count in (('mine', 5), ('next', 1), ('today', 5)):
             interaction = self.interaction(actor=30)
             await self.commands[mode](interaction)
-            message = interaction.response.send_message.call_args
+            message = interaction.followup.send.call_args
             self.assertEqual(message.args[0].count('ID `'), count)
             self.assertIn('More upcoming', message.args[0])
             self.assertLess(len(message.args[0]), 2000)
             self.assertTrue(message.kwargs['ephemeral'])
         interaction = self.interaction(actor=999, admin=True)
         await self.commands['mine'](interaction)
-        self.assertIn('No upcoming', interaction.response.send_message.call_args.args[0])
+        self.assertIn('No upcoming', interaction.followup.send.call_args.args[0])
 
     def test_today_uses_at_day_not_utc_day(self):
         self.now = datetime(2026, 9, 23, 0, 30)
@@ -553,7 +553,7 @@ class PlayerExperienceTests(unittest.IsolatedAsyncioTestCase):
         with patch('lastz_bot.commands.alliance.SessionLocal', self.sessions):
             interaction = self.interaction()
             await command.callback(interaction, 'Alpha', True, False, True, False)
-            self.assertIn('60m', interaction.response.send_message.call_args.args[0])
+            self.assertIn('60m', interaction.followup.send.call_args.args[0])
         tree = Mock(); setup_member_commands(tree)
         rank = tree.add_command.call_args.args[0].get_command('rank')
         self.assertEqual([c.value for c in rank.get_parameter('rank').choices], ['R1','R2','R3','R4','R5'])

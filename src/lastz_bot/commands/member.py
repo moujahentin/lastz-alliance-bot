@@ -3,6 +3,7 @@ from typing import Literal
 import discord
 from discord import app_commands
 
+from lastz_bot.interactions import private_command, respond
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.event_management import EventManagementError
 from lastz_bot.memberships import add_member, change_member, list_members
@@ -27,9 +28,10 @@ def setup_member_commands(tree: app_commands.CommandTree) -> None:
             message = "✅ Membership updated." if changed else "ℹ️ Membership already has those settings; no change made."
         except EventManagementError as error:
             message = str(error)
-        await interaction.response.send_message(message, ephemeral=True)
+        await respond(interaction, message, ephemeral=True)
 
     @group.command(name="add", description="Add a player to an alliance.")
+    @private_command
     async def add(interaction: discord.Interaction, alliance: str, game_name: str,
                   rank: Rank = "R1", discord_user: discord.Member | None = None):
         try:
@@ -39,39 +41,45 @@ def setup_member_commands(tree: app_commands.CommandTree) -> None:
             message = f"✅ Member `{game_name}` added to alliance `{alliance}` as {rank}."
         except EventManagementError as error:
             message = str(error)
-        await interaction.response.send_message(message, ephemeral=True)
+        await respond(interaction, message, ephemeral=True)
 
     @group.command(name="rank", description="Change an alliance member's rank.")
+    @private_command
     async def rank(interaction: discord.Interaction, alliance: str, rank: Rank,
                    member: discord.Member | None = None, game_name: str | None = None):
         await change(interaction, alliance, member, game_name, rank=rank)
 
     @group.command(name="deactivate", description="Deactivate membership, preserving history and RSVPs.")
+    @private_command
     async def deactivate(interaction: discord.Interaction, alliance: str,
                          member: discord.Member | None = None, game_name: str | None = None):
         await change(interaction, alliance, member, game_name, active=False)
 
     @group.command(name="activate", description="Reactivate the same historical membership.")
+    @private_command
     async def activate(interaction: discord.Interaction, alliance: str,
                        member: discord.Member | None = None, game_name: str | None = None):
         await change(interaction, alliance, member, game_name, active=True)
 
     @group.command(name="remove", description="Deactivate a player; retain their membership history.")
+    @private_command
     async def remove(interaction: discord.Interaction, alliance: str, game_name: str):
         # Compatibility entry point: leaving never deletes historical membership.
         await change(interaction, alliance, game_name=game_name, active=False)
 
     @group.command(name="link", description="Link an existing membership to a Discord member.")
+    @private_command
     async def link(interaction: discord.Interaction, alliance: str, game_name: str, discord_user: discord.Member):
         await change(interaction, alliance, game_name=game_name, link_to=discord_user.id)
 
     @group.command(name="list", description="List alliance members, ranks, and active states.")
+    @private_command
     async def roster(interaction: discord.Interaction, alliance: str):
         try:
             guild, _, _ = context(interaction)
             members = list_members(SessionLocal, guild, alliance)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
         lines = [f"**Members of {discord.utils.escape_markdown(alliance)}:**"]
         for row in members:
@@ -84,8 +92,8 @@ def setup_member_commands(tree: app_commands.CommandTree) -> None:
             if len(pages[-1]) + len(line) + 1 > 1900:
                 pages.append("")
             pages[-1] += ("\n" if pages[-1] else "") + line
-        await interaction.response.send_message(pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await respond(interaction, pages[0], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         for page in pages[1:]:
-            await interaction.followup.send(page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            await respond(interaction, page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     tree.add_command(group)

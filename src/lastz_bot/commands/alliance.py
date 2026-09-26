@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from sqlalchemy import select, text
 
+from lastz_bot.interactions import private_command, respond
 from lastz_bot.database.models import Alliance, Guild
 from lastz_bot.database.session import SessionLocal
 from lastz_bot.permissions import get_management_rank
@@ -19,19 +20,20 @@ def setup_alliance_commands(
         name="create",
         description="Create a new Last Z alliance.",
     )
+    @private_command
     async def create(
         interaction: discord.Interaction,
         name: str,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
             return
 
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ You need the Administrator permission to create an alliance.",
                 ephemeral=True,
             )
@@ -40,7 +42,7 @@ def setup_alliance_commands(
         alliance_name = name.strip()
 
         if not alliance_name:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Alliance name cannot be empty.",
                 ephemeral=True,
             )
@@ -50,7 +52,7 @@ def setup_alliance_commands(
             guild = session.get(Guild, interaction.guild.id)
 
             if guild is None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     "❌ This Discord server has not been initialized yet. Run `/setup` first.",
                     ephemeral=True,
                 )
@@ -64,7 +66,7 @@ def setup_alliance_commands(
             )
 
             if existing_alliance is not None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     f"ℹ️ Alliance `{alliance_name}` already exists.",
                     ephemeral=True,
                 )
@@ -78,7 +80,7 @@ def setup_alliance_commands(
             session.add(alliance)
             session.commit()
 
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ Alliance `{alliance_name}` has been created.",
             ephemeral=True,
         )
@@ -87,11 +89,12 @@ def setup_alliance_commands(
         name="list",
         description="List the alliances registered for this Discord server.",
     )
+    @private_command
     async def list_alliances(
         interaction: discord.Interaction,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
@@ -101,7 +104,7 @@ def setup_alliance_commands(
             guild = session.get(Guild, interaction.guild.id)
 
             if guild is None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     "❌ This Discord server has not been initialized yet. Run `/setup` first.",
                     ephemeral=True,
                 )
@@ -114,7 +117,7 @@ def setup_alliance_commands(
             ).all()
 
         if not alliances:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "ℹ️ No alliances have been created for this Discord server yet.",
                 ephemeral=True,
             )
@@ -125,7 +128,7 @@ def setup_alliance_commands(
             for alliance in alliances
         ]
 
-        await interaction.response.send_message(
+        await respond(interaction,
             "**Alliances:**\n" + "\n".join(alliance_lines),
             ephemeral=True,
         )
@@ -134,20 +137,21 @@ def setup_alliance_commands(
         name="set-channel",
         description="Set the channel for alliance event reminders.",
     )
+    @private_command
     async def set_channel(
         interaction: discord.Interaction,
         alliance: str,
         channel: discord.TextChannel,
     ) -> None:
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ This command can only be used inside a Discord server.",
                 ephemeral=True,
             )
             return
         alliance_name = alliance.strip()
         if not alliance_name:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Alliance name cannot be empty.", ephemeral=True,
             )
             return
@@ -158,21 +162,21 @@ def setup_alliance_commands(
                 discord_user_id=interaction.user.id,
             )
             if actor_rank is None:
-                await interaction.response.send_message(
+                await respond(interaction,
                     "❌ You need to be an R4, R5, or Server Administrator "
                     "of this alliance to configure event reminders.",
                     ephemeral=True,
                 )
                 return
         if channel.guild.id != interaction.guild.id:
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ Choose a channel in this Discord server.", ephemeral=True,
             )
             return
         bot_member = interaction.guild.me
         permissions = channel.permissions_for(bot_member) if bot_member is not None else None
         if permissions is None or not (permissions.view_channel and permissions.send_messages):
-            await interaction.response.send_message(
+            await respond(interaction,
                 "❌ I need View Channel and Send Messages permissions in that channel.",
                 ephemeral=True,
             )
@@ -185,11 +189,11 @@ def setup_alliance_commands(
                 interaction.guild.id, alliance_name, interaction.user.id, session=session,
             ) is None:
                 session.rollback()
-                await interaction.response.send_message("❌ You no longer have alliance management access.", ephemeral=True)
+                await respond(interaction, "❌ You no longer have alliance management access.", ephemeral=True)
                 return
             if session.get(Guild, interaction.guild.id) is None:
                 session.rollback()
-                await interaction.response.send_message(
+                await respond(interaction,
                     "❌ This Discord server has not been initialized yet. Run `/setup` first.",
                     ephemeral=True,
                 )
@@ -200,18 +204,19 @@ def setup_alliance_commands(
             ))
             if record is None:
                 session.rollback()
-                await interaction.response.send_message(
+                await respond(interaction,
                     f"❌ Alliance `{alliance_name}` does not exist.", ephemeral=True,
                 )
                 return
             record.reminder_channel_id = channel.id
             session.commit()
-        await interaction.response.send_message(
+        await respond(interaction,
             f"✅ Event reminders for alliance `{alliance_name}` will be sent to {channel.mention}.",
             ephemeral=True,
         )
 
     @alliance_group.command(name="event-delivery", description="Configure automatic cards and independent player DMs, or view settings.")
+    @private_command
     async def event_delivery(
         interaction: discord.Interaction, alliance: str, auto_publish: bool | None = None,
         dm_24h: bool | None = None, dm_1h: bool | None = None, dm_15m: bool | None = None,
@@ -219,17 +224,17 @@ def setup_alliance_commands(
         from lastz_bot.player_policy import configure_delivery, LEADS
         from lastz_bot.event_management import EventManagementError
         if interaction.guild is None:
-            await interaction.response.send_message("Use this command inside a Discord server.", ephemeral=True)
+            await respond(interaction, "Use this command inside a Discord server.", ephemeral=True)
             return
         try:
             enabled, mask = configure_delivery(SessionLocal, interaction.guild.id, alliance, interaction.user.id,
                 interaction.user.guild_permissions.administrator, auto_publish=auto_publish,
                 dm_24h=dm_24h, dm_1h=dm_1h, dm_15m=dm_15m)
         except EventManagementError as error:
-            await interaction.response.send_message(str(error), ephemeral=True)
+            await respond(interaction, str(error), ephemeral=True)
             return
         leads = ", ".join(f"{lead}m" for bit, lead in enumerate(LEADS) if mask & (1 << bit)) or "disabled"
-        await interaction.response.send_message(
+        await respond(interaction,
             f"Automatic cards: {'enabled' if enabled else 'disabled'} (uses /alliance set-channel). "
             f"Normal event DMs: {leads}. Existing channel and missing-RSVP reminders keep their own settings.",
             ephemeral=True,

@@ -626,6 +626,51 @@ are needed; Alembic head remains `b36e50d147f2`. **RSVP is intention, not attend
 or reconfirmation after a schedule change.** This feature adds no reminders,
 assignments, selection, penalties, or attendance tracking.
 
+### Discord interaction reliability and member context menus
+
+Database-backed `/setup`, `/alliance`, `/member`, and `/event` commands acknowledge
+privately before work, then send their existing result through private followups.
+This includes roster/discovery reads, which can wait on SQLite or generate weekly
+occurrences. `/event publish` uses the same response adapter around its existing
+deferred publication workflow. `/ping` remains immediate and public; autocomplete,
+persistent event-card buttons and background workers keep their existing paths.
+An acknowledgement failure prevents the operation from starting. A failed final
+Discord confirmation is logged separately and never retries the database write or
+claims that a committed operation rolled back. If confirmation is unavailable,
+inspect current state before repeating a command. Deferral cannot guarantee delivery
+when Discord is unavailable or the token has expired.
+
+Right-click a Discord user → **Apps** → **Alliance Member Info** to see their
+persisted linked memberships in the current server, including game name, alliance,
+rank, active state and Discord link. This intentionally follows `/member list`:
+any user invoking it in the server may see its roster information privately.
+Memberships from other servers are excluded; multiple memberships sort by alliance.
+
+**Alliance Member Manage** opens a private, temporary panel without changing data.
+Choose an alliance membership explicitly, then select R1–R5 or the displayed
+Activate/Deactivate action. Only manageable memberships are offered. Active R4
+members may manage R1–R4 and may not promote to or manage R5; active R5 members
+may manage all ranks in their own alliance. Server Administrators retain the
+existing override in their own server. Inactive officers have no management
+access. Self-demotion/deactivation remains allowed, with no last-R5 restriction.
+
+Only the panel's original actor in its original server can use it. Every mutation
+uses the same service as slash commands, rechecking current authorization and the
+selected membership's identity, link, rank and active state inside the serialized
+write transaction. A changed snapshot is rejected with instructions to reopen.
+Activation requests an explicit state rather than toggling stale text. Successful
+or no-op actions close the panel; further actions require opening a fresh panel.
+Panels expire after three minutes and disable controls where Discord permits.
+More than 25 manageable memberships use selection pages with fresh authorization.
+There is no persistent panel state and panels do not survive bot restarts.
+
+Both user commands are registered globally alongside existing slash commands and
+use the same startup `tree.sync()`. Discord controls global-command availability
+and propagation. Context commands only support Discord-linked memberships;
+unlinked players continue to use `/member` commands with `game_name`.
+
+No schema change or migration is required. Alembic head remains `b36e50d147f2`.
+
 ## Technology
 
 - Python

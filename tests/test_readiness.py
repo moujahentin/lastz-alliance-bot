@@ -242,8 +242,8 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
         for name in ('roster', 'no-response'):
             interaction = self.interaction()
             await self.commands[name](interaction, event)
-            interaction.response.send_message.assert_awaited_once()
-            call = interaction.response.send_message.call_args
+            interaction.followup.send.assert_awaited_once()
+            call = interaction.followup.send.call_args
             self.assertTrue(call.kwargs['ephemeral'])
             self.assertFalse(call.kwargs['allowed_mentions'].users)
             self.assertIn('Eligible: 5', call.args[0]); self.assertIn('Unlinked — unlinked', call.args[0])
@@ -255,25 +255,25 @@ class ReadinessTests(unittest.IsolatedAsyncioTestCase):
         for command in ('roster', 'no-response'):
             interaction = self.interaction()
             await self.commands[command](interaction, event, 2)
-            self.assertIn('Page 2/', interaction.response.send_message.call_args.args[0])
+            self.assertIn('Page 2/', interaction.followup.send.call_args.args[0])
             outsider = self.interaction(actor=30)
             await self.commands[command](outsider, event, 2)
-            self.assertNotIn('Member', outsider.response.send_message.call_args.args[0])
+            self.assertNotIn('Member', outsider.followup.send.call_args.args[0])
         self.change(user=10, active=False)
         interaction = self.interaction()
         await self.commands['roster'](interaction, event, 2)
-        self.assertNotIn('Page', interaction.response.send_message.call_args.args[0])
+        self.assertNotIn('Page', interaction.followup.send.call_args.args[0])
         delete_event(self.sessions, 1, event, 999, True)
         interaction = self.interaction(actor=999, admin=True)
         await self.commands['no-response'](interaction, event, 2)
-        self.assertNotIn('Member', interaction.response.send_message.call_args.args[0])
+        self.assertNotIn('Member', interaction.followup.send.call_args.args[0])
 
     async def test_dm_command_denial_and_unknown_page(self):
         event = self.once()
         for command in ('roster', 'no-response'):
             interaction = self.interaction(guild=None)
             await self.commands[command](interaction, event)
-            self.assertIn('Discord server', interaction.response.send_message.call_args.args[0])
+            self.assertIn('Discord server', interaction.followup.send.call_args.args[0])
             interaction = self.interaction()
             await self.commands[command](interaction, event, 999)
-            self.assertIn('Choose a page', interaction.response.send_message.call_args.args[0])
+            self.assertIn('Choose a page', interaction.followup.send.call_args.args[0])

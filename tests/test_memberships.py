@@ -119,21 +119,21 @@ class MembershipTests(unittest.IsolatedAsyncioTestCase):
         for command, options in [('rank',{'rank':'R3'}),('deactivate',{}),('activate',{})]:
             interaction = self.interaction()
             await self.commands_member[command](interaction, alliance='Alpha', member=target, **options)
-            self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
-            self.assertIn('updated', interaction.response.send_message.call_args.args[0])
+            self.assertTrue(interaction.followup.send.call_args.kwargs['ephemeral'])
+            self.assertIn('updated', interaction.followup.send.call_args.args[0])
         interaction = self.interaction()
         await self.commands_member['remove'](interaction,'Alpha','30')
         self.assertFalse(self.member().active)
         interaction = self.interaction()
         await self.commands_member['list'](interaction,'Alpha')
-        display = interaction.response.send_message.call_args.args[0]
+        display = interaction.followup.send.call_args.args[0]
         self.assertIn('R3 — inactive',display); self.assertIn('<@30>',display)
         interaction = self.interaction(actor=30)
         await self.commands_member['activate'](interaction,'Alpha',member=target)
-        self.assertIn('does not permit',interaction.response.send_message.call_args.args[0])
+        self.assertIn('does not permit',interaction.followup.send.call_args.args[0])
         interaction = self.interaction(guild=None)
         await self.commands_member['list'](interaction,'Alpha')
-        self.assertIn('inside a Discord server',interaction.response.send_message.call_args.args[0])
+        self.assertIn('inside a Discord server',interaction.followup.send.call_args.args[0])
 
     def test_waiting_rsvp_observes_committed_deactivation(self):
         occurrence = self.once(); attempted = Signal()
@@ -186,7 +186,7 @@ class MembershipTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((records[-1].previous_discord_user_id, records[-1].new_discord_user_id), (None, 77))
         interaction = self.interaction()
         await self.commands_member['rank'](interaction, 'Alpha', 'R4', member=SimpleNamespace(id=77), game_name='Unlinked')
-        self.assertIn('not both', interaction.response.send_message.call_args.args[0])
+        self.assertIn('not both', interaction.followup.send.call_args.args[0])
         self.assertEqual(len(self.history()), 3)
 
     def test_inactive_officer_promotion_does_not_reactivate_or_restore_access(self):

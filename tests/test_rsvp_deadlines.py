@@ -86,7 +86,7 @@ class RSVPDeadlineTests(unittest.IsolatedAsyncioTestCase):
                         {'missing_reminder':True}, {'rsvp_deadline':'invalid'}, {'deadline_minutes':10}):
             interaction=self.interaction()
             await self.commands['create'](interaction,'Alpha','Bad','2026-09-22 17:00',**options)
-            self.assertTrue(interaction.response.send_message.call_args.args[0].startswith('❌'))
+            self.assertTrue(interaction.followup.send.call_args.args[0].startswith('❌'))
         self.assertEqual(self.rows(),[])
 
     def test_business_and_database_deadline_validation(self):
